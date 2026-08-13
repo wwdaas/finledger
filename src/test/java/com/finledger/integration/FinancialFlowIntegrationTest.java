@@ -5,6 +5,8 @@ import com.finledger.account.exception.AccountAccessDeniedException;
 import com.finledger.account.exception.AccountNotFoundException;
 import com.finledger.account.mapper.AccountMapper;
 import com.finledger.account.service.AccountService;
+import com.finledger.ai.dto.AiAnalysisResponse;
+import com.finledger.ai.service.AiTransactionAssistantService;
 import com.finledger.common.money.InvalidAmountException;
 import com.finledger.idempotency.mapper.IdempotencyRecordMapper;
 import com.finledger.ledger.entity.TransactionRecordEntity;
@@ -75,6 +77,7 @@ class FinancialFlowIntegrationTest {
     @Autowired private AccountService accountService;
     @Autowired private RechargeService rechargeService;
     @Autowired private IdempotentTransferService transferService;
+    @Autowired private AiTransactionAssistantService aiAssistantService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private MockMvc mockMvc;
 
@@ -245,6 +248,26 @@ class FinancialFlowIntegrationTest {
 
         assertThatThrownBy(() -> accountService.getOwnedAccount(stranger, accountId))
                 .isInstanceOf(AccountAccessDeniedException.class);
+    }
+
+    @Test
+    void shouldAnalyzeOnlyTheAuthenticatedUsersTransactions() {
+        Long owner = createUser("ai_owner");
+        Long receiver = createUser("ai_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("100.00"));
+        transferService.transfer(
+                owner, "ai-transfer-key", new TransferRequest(from, to, money("40.00"))
+        );
+
+        AiAnalysisResponse ownerResult = aiAssistantService.ask(owner, "我这个月转出去多少钱？");
+        AiAnalysisResponse receiverResult = aiAssistantService.ask(receiver, "我这个月转出去多少钱？");
+
+        assertThat(ownerResult.totalAmount()).isEqualByComparingTo("40.00");
+        assertThat(ownerResult.transactionCount()).isEqualTo(1);
+        assertThat(receiverResult.totalAmount()).isEqualByComparingTo("0.00");
+        assertThat(receiverResult.transactionCount()).isZero();
     }
 
     private static MySQLContainer mysqlContainer() {
