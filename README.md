@@ -10,6 +10,7 @@ FinLedger 是一个用于 Java 后端学习、校招面试和工程能力展示�
 
 Phase 0—17 已完成，核心能力包括：
 
+- 同源响应式 Web 工作台，覆盖注册、登录、账户、充值、转账、流水与 AI 查询；
 - 用户注册、BCrypt 密码存储、登录和 HS256 JWT 鉴权；
 - 模拟资金账户创建、归属校验、余额查询和模拟充值；
 - `@Transactional` 原子转账、余额校验和双边交易流水；
@@ -126,6 +127,21 @@ sequenceDiagram
 | `POST` | `/api/transfers` | 幂等转账，必须带 `Idempotency-Key` |
 | `GET` | `/api/transactions` | 分页筛选自己的交易流水 |
 | `POST` | `/api/ai/transactions/query` | 自然语言查询自己的交易数据 |
+
+## 前端操作界面
+
+启动应用后直接访问：
+
+```text
+http://localhost:8080/
+```
+
+前端位于 `src/main/resources/static`，随 Spring Boot 一起构建和部署，不需要额外安装
+Node.js。页面包括登录/注册、资金总览、账户管理、模拟充值、幂等转账、分页流水和只读
+AI 助手。JWT 只保存在当前浏览器标签页的 `sessionStorage`，关闭标签页后需要重新登录。
+
+静态首页和 CSS/JavaScript 可以匿名加载，所有账户与交易接口仍由 Spring Security 验证
+JWT；前端不会改变服务端的账户归属、事务、锁或幂等规则。
 
 转账请求示例：
 

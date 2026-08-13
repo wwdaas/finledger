@@ -39,7 +39,10 @@ public class SecurityConfiguration {
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/api/health", "/api/users", "/api/auth/login").permitAll()
+                        .requestMatchers(
+                                "/", "/index.html", "/styles.css", "/app.js",
+                                "/api/health", "/api/users", "/api/auth/login"
+                        ).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, exception) ->

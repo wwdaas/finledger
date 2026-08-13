@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="FinLedger 模拟资金账户与交易管理平台">
+    <title>FinLedger · 智能资金工作台</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+<section id="auth-view" class="auth-view">
+    <div class="auth-story">
+        <header class="brand brand-light">
+            <span class="brand-mark">FL</span>
+            <span>
+                <strong>FinLedger</strong>
+                <small>SIMULATED FINANCE</small>
+            </span>
+        </header>
+
+        <div class="auth-copy">
+            <p class="eyebrow">可信 · 可追溯 · 可解释</p>
+            <h1>每一笔余额变化，<br>都有迹可循。</h1>
+            <p class="auth-intro">一个聚焦事务一致性、并发控制与资金安全边界的模拟账户平台。</p>
+        </div>
+
+        <div class="trust-grid" aria-label="平台特性">
+            <article>
+                <span class="feature-index">01</span>
+                <strong>原子转账</strong>
+                <p>扣款、入账与流水在同一事务中完成。</p>
+            </article>
+            <article>
+                <span class="feature-index">02</span>
+                <strong>幂等保护</strong>
+                <p>重复请求只会产生一笔真实交易。</p>
+            </article>
+            <article>
+                <span class="feature-index">03</span>
+                <strong>只读 AI</strong>
+                <p>自然语言分析数据，不接触资金写入。</p>
+            </article>
+        </div>
+
+        <div class="system-pulse">
+            <span id="auth-health-dot" class="pulse-dot"></span>
+            <span id="auth-health-text">正在连接 FinLedger 服务</span>
+        </div>
+    </div>
+
+    <div class="auth-panel-wrap">
+        <div class="auth-panel">
+            <div class="auth-heading">
+                <span class="mobile-brand-mark">FL</span>
+                <div>
+                    <p class="eyebrow">欢迎使用</p>
+                    <h2 id="auth-title">登录资金工作台</h2>
+                    <p id="auth-subtitle">使用你的账户继续访问安全工作区。</p>
+                </div>
+            </div>
+
+            <div class="auth-tabs" role="tablist" aria-label="认证方式">
+                <button id="login-tab" class="auth-tab active" type="button" role="tab" aria-selected="true">登录</button>
+                <button id="register-tab" class="auth-tab" type="button" role="tab" aria-selected="false">创建用户</button>
+            </div>
+
+            <form id="login-form" class="auth-form">
+                <label>
+                    <span>用户名</span>
+                    <input id="login-username" name="username" autocomplete="username" required placeholder="例如：demo_user">
+                </label>
+                <label>
+                    <span>密码</span>
+                    <input id="login-password" name="password" type="password" autocomplete="current-password" required placeholder="输入登录密码">
+                </label>
+                <button class="button button-primary button-block" type="submit">
+                    <span>安全登录</span><span aria-hidden="true">→</span>
+                </button>
+            </form>
+
+            <form id="register-form" class="auth-form hidden">
+                <label>
+                    <span>用户名</span>
+                    <input id="register-username" name="username" autocomplete="username" minlength="3" maxlength="50" required placeholder="字母开头，可包含数字与下划线">
+                </label>
+                <label>
+                    <span>密码</span>
+                    <input id="register-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="64" required placeholder="至少 8 位，同时包含字母和数字">
+                </label>
+                <button class="button button-primary button-block" type="submit">
+                    <span>创建模拟用户</span><span aria-hidden="true">→</span>
+                </button>
+                <p class="form-note">此平台仅处理模拟资金，不连接真实银行或支付渠道。</p>
+            </form>
+        </div>
+    </div>
+</section>
+
+<div id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+        <header class="brand brand-light sidebar-brand">
+            <span class="brand-mark">FL</span>
+            <span>
+                <strong>FinLedger</strong>
+                <small>FINANCE DESK</small>
+            </span>
+        </header>
+
+        <nav class="main-nav" aria-label="主导航">
+            <button class="nav-item active" data-view="overview" type="button">
+                <span class="nav-glyph">⌂</span><span>资金总览</span>
+            </button>
+            <button class="nav-item" data-view="accounts" type="button">
+                <span class="nav-glyph">▰</span><span>我的账户</span>
+            </button>
+            <button class="nav-item" data-view="transfer" type="button">
+                <span class="nav-glyph">⇄</span><span>发起转账</span>
+            </button>
+            <button class="nav-item" data-view="transactions" type="button">
+                <span class="nav-glyph">≡</span><span>交易流水</span>
+            </button>
+            <button class="nav-item" data-view="ai" type="button">
+                <span class="nav-glyph">✦</span><span>AI 分析助手</span>
+            </button>
+        </nav>
+
+        <div class="sidebar-note">
+            <span class="sidebar-note-icon">✓</span>
+            <div>
+                <strong>MySQL 权威账本</strong>
+                <p>余额与流水均以数据库为准</p>
+            </div>
+        </div>
+
+        <button id="logout-button" class="logout-button" type="button">
+            <span>退出登录</span><span aria-hidden="true">↗</span>
+        </button>
+    </aside>
+
+    <main class="workspace">
+        <header class="topbar">
+            <div>
+                <p id="today-label" class="date-label"></p>
+                <h2>你好，<span id="current-username">用户</span></h2>
+            </div>
+            <div class="topbar-actions">
+                <span class="environment-badge"><span class="pulse-dot"></span> 模拟环境</span>
+                <button id="top-create-account" class="button button-outline button-small" type="button">＋ 新建账户</button>
+            </div>
+        </header>
+
+        <section id="view-overview" class="page-view active">
+            <div class="hero-grid">
+                <article class="balance-hero">
+                    <div class="balance-hero-top">
+                        <span>账户总余额</span>
+                        <span class="currency-pill">CNY</span>
+                    </div>
+                    <div id="total-balance" class="hero-amount">¥ 0.00</div>
+                    <div class="hero-meta">
+                        <span><strong id="account-count">0</strong> 个资金账户</span>
+                        <span>数据实时来自 MySQL</span>
+                    </div>
+                    <div class="hero-orbit orbit-one"></div>
+                    <div class="hero-orbit orbit-two"></div>
+                </article>
+
+                <article class="quick-panel">
+                    <div class="section-heading compact">
+                        <div>
+                            <p class="eyebrow">快捷操作</p>
+                            <h3>今天要做什么？</h3>
+                        </div>
+                    </div>
+                    <div class="quick-grid">
+                        <button class="quick-action" data-action="recharge" type="button">
+                            <span class="quick-icon warm">＋</span>
+                            <span><strong>模拟充值</strong><small>增加账户余额</small></span>
+                        </button>
+                        <button class="quick-action" data-action="transfer" type="button">
+                            <span class="quick-icon mint">↗</span>
+                            <span><strong>账户转账</strong><small>安全原子处理</small></span>
+                        </button>
+                        <button class="quick-action" data-action="transactions" type="button">
+                            <span class="quick-icon sand">≡</span>
+                            <span><strong>查看流水</strong><small>追踪每笔变更</small></span>
+                        </button>
+                        <button class="quick-action" data-action="ai" type="button">
+                            <span class="quick-icon dark">✦</span>
+                            <span><strong>智能分析</strong><small>用自然语言查询</small></span>
+                        </button>
+                    </div>
+                </article>
+            </div>
+
+            <div class="content-section">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">MY ACCOUNTS</p>
+                        <h3>资金账户</h3>
+                    </div>
+                    <button class="text-button" data-go="accounts" type="button">管理全部账户 →</button>
+                </div>
+                <div id="overview-account-grid" class="account-grid"></div>
+            </div>
+
+            <div class="content-section">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">RECENT ACTIVITY</p>
+                        <h3>最近交易</h3>
+                    </div>
+                    <button class="text-button" data-go="transactions" type="button">查看完整流水 →</button>
+                </div>
+                <div class="table-card">
+                    <div class="table-scroll">
+                        <table>
+                            <thead><tr><th>交易</th><th>账户</th><th>时间</th><th class="align-right">金额</th><th class="align-right">余额</th></tr></thead>
+                            <tbody id="overview-transaction-body"></tbody>
+                        </table>
+                    </div>
+                    <div id="overview-empty-transactions" class="empty-state hidden">
+                        <span>≋</span><strong>还没有交易流水</strong><p>完成充值或转账后，记录会显示在这里。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-accounts" class="page-view">
+            <div class="page-title-row">
+                <div>
+                    <p class="eyebrow">ACCOUNT MANAGEMENT</p>
+                    <h1>我的账户</h1>
+                    <p>管理模拟资金账户，并查看当前权威余额。</p>
+                </div>
+                <button id="create-account-button" class="button button-primary" type="button">＋ 创建新账户</button>
+            </div>
+            <div id="account-page-grid" class="account-grid account-grid-large"></div>
+            <div class="info-strip">
+                <span class="info-strip-mark">i</span>
+                <p><strong>关于账户余额：</strong>页面展示值来自 MySQL 中的当前账户状态。Redis 不保存也不决定核心余额。</p>
+            </div>
+        </section>
+
+        <section id="view-transfer" class="page-view">
+            <div class="page-title-row">
+                <div>
+                    <p class="eyebrow">SECURE TRANSFER</p>
+                    <h1>发起转账</h1>
+                    <p>一次提交完成扣款、入账、订单与双边流水。</p>
+                </div>
+            </div>
+            <div class="form-layout">
+                <form id="transfer-form" class="operation-card">
+                    <div class="operation-heading">
+                        <span class="operation-number">01</span>
+                        <div><h3>填写转账信息</h3><p>收款账户使用系统内部账户 ID。</p></div>
+                    </div>
+                    <label>
+                        <span>付款账户</span>
+                        <select id="transfer-from" required></select>
+                    </label>
+                    <label>
+                        <span>收款账户 ID</span>
+                        <input id="transfer-to" type="number" min="1" required placeholder="输入目标账户 ID">
+                    </label>
+                    <label>
+                        <span>转账金额（CNY）</span>
+                        <div class="money-input"><span>¥</span><input id="transfer-amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></div>
+                    </label>
+                    <div class="idempotency-box">
+                        <span>Idempotency-Key</span>
+                        <code id="idempotency-key"></code>
+                    </div>
+                    <button class="button button-primary button-block" type="submit">确认模拟转账</button>
+                </form>
+
+                <aside class="assurance-card">
+                    <p class="eyebrow">TRANSACTION GUARANTEE</p>
+                    <h3>这笔转账如何被保护？</h3>
+                    <ol class="assurance-list">
+                        <li><span>1</span><div><strong>唯一请求占位</strong><p>数据库唯一约束拦截并发重复提交。</p></div></li>
+                        <li><span>2</span><div><strong>固定顺序加锁</strong><p>按账户 ID 顺序锁定双方账户，降低死锁风险。</p></div></li>
+                        <li><span>3</span><div><strong>事务原子提交</strong><p>任一关键步骤失败，全部余额和流水一起回滚。</p></div></li>
+                    </ol>
+                    <div class="assurance-footer">仅处理模拟资金 · 不连接真实支付渠道</div>
+                </aside>
+            </div>
+        </section>
+
+        <section id="view-transactions" class="page-view">
+            <div class="page-title-row">
+                <div>
+                    <p class="eyebrow">LEDGER JOURNAL</p>
+                    <h1>交易流水</h1>
+                    <p>每一条记录都保存变更前后余额，便于审计和对账。</p>
+                </div>
+            </div>
+            <form id="transaction-filter" class="filter-bar">
+                <label><span>账户</span><select id="filter-account"><option value="">全部账户</option></select></label>
+                <label><span>业务类型</span><select id="filter-business"><option value="">全部类型</option><option value="RECHARGE">充值</option><option value="TRANSFER">转账</option></select></label>
+                <label><span>资金方向</span><select id="filter-direction"><option value="">全部方向</option><option value="CREDIT">收入</option><option value="DEBIT">支出</option></select></label>
+                <button class="button button-dark button-small" type="submit">筛选流水</button>
+            </form>
+            <div class="table-card ledger-table-card">
+                <div class="table-scroll">
+                    <table>
+                        <thead><tr><th>流水号</th><th>类型</th><th>账户</th><th>发生时间</th><th>余额变化</th><th class="align-right">金额</th></tr></thead>
+                        <tbody id="transaction-body"></tbody>
+                    </table>
+                </div>
+                <div id="transaction-empty" class="empty-state hidden"><span>≋</span><strong>没有符合条件的流水</strong><p>调整筛选条件后再试一次。</p></div>
+                <footer class="pagination">
+                    <span id="transaction-total">共 0 条记录</span>
+                    <div><button id="page-prev" type="button">←</button><span id="page-indicator">1 / 1</span><button id="page-next" type="button">→</button></div>
+                </footer>
+            </div>
+        </section>
+
+        <section id="view-ai" class="page-view">
+            <div class="ai-layout">
+                <div class="ai-intro-card">
+                    <span class="ai-spark">✦</span>
+                    <p class="eyebrow">READ-ONLY INTELLIGENCE</p>
+                    <h1>AI 交易分析助手</h1>
+                    <p>用自然语言查询自己的交易数据。助手只能查询和解释，不能转账、充值或修改余额。</p>
+                    <div class="ai-boundary"><span>✓</span> Java 权限校验 <span>✓</span> 预定义 SQL <span>✓</span> 用户数据隔离</div>
+                </div>
+
+                <div class="ai-chat-card">
+                    <div class="suggestion-row">
+                        <button type="button" data-question="我这个月转出去多少钱？">本月转出统计</button>
+                        <button type="button" data-question="上个月最大的三笔支出是什么？">上月最大支出</button>
+                        <button type="button" data-question="最近有没有超过1000元的大额交易？">近期大额交易</button>
+                    </div>
+                    <div id="ai-response" class="ai-response">
+                        <span class="assistant-avatar">FL</span>
+                        <div><strong>你好，我是 FinLedger 助手。</strong><p>选择一个示例问题，或者在下方输入你想了解的交易情况。</p></div>
+                    </div>
+                    <form id="ai-form" class="ai-form">
+                        <label class="sr-only" for="ai-question">交易分析问题</label>
+                        <textarea id="ai-question" maxlength="500" required placeholder="例如：我这个月转出去多少钱？"></textarea>
+                        <button class="button button-primary" type="submit">分析交易 <span aria-hidden="true">✦</span></button>
+                    </form>
+                </div>
+            </div>
+        </section>
+    </main>
+</div>
+
+<div id="recharge-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="recharge-title">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-card">
+        <button class="modal-close" type="button" data-close-modal aria-label="关闭">×</button>
+        <p class="eyebrow">SIMULATED RECHARGE</p>
+        <h2 id="recharge-title">模拟充值</h2>
+        <p>充值仅用于演示账户余额变化，不连接真实支付渠道。</p>
+        <form id="recharge-form">
+            <label><span>充值账户</span><select id="recharge-account" required></select></label>
+            <label><span>充值金额（CNY）</span><div class="money-input"><span>¥</span><input id="recharge-amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></div></label>
+            <button class="button button-primary button-block" type="submit">确认模拟充值</button>
+        </form>
+    </div>
+</div>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

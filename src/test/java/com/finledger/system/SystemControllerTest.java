@@ -9,7 +9,9 @@ import org.springframework.test.context.ActiveProfiles;
 import com.finledger.security.SecurityConfiguration;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(SystemController.class)
@@ -26,5 +28,17 @@ class SystemControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.service").value("finledger"))
                 .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    @Test
+    void shouldServePublicFrontendAtRoot() throws Exception {
+        mockMvc.perform(get("/"))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("index.html"));
+
+        mockMvc.perform(get("/index.html"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/html"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("FinLedger")));
     }
 }
