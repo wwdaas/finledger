@@ -94,6 +94,33 @@ public class AccountService {
         return account;
     }
 
+    public LockedTransferAccounts lockTransferAccounts(
+            Long userId,
+            Long fromAccountId,
+            Long toAccountId
+    ) {
+        Long lowerId = Math.min(fromAccountId, toAccountId);
+        Long higherId = Math.max(fromAccountId, toAccountId);
+
+        AccountEntity lowerAccount = lockAccount(lowerId);
+        AccountEntity higherAccount = lockAccount(higherId);
+        AccountEntity fromAccount = fromAccountId.equals(lowerId) ? lowerAccount : higherAccount;
+        AccountEntity toAccount = toAccountId.equals(lowerId) ? lowerAccount : higherAccount;
+
+        if (!fromAccount.getUserId().equals(userId)) {
+            throw new AccountAccessDeniedException(fromAccountId);
+        }
+        return new LockedTransferAccounts(fromAccount, toAccount);
+    }
+
+    private AccountEntity lockAccount(Long accountId) {
+        AccountEntity account = accountMapper.selectByIdForUpdate(accountId);
+        if (account == null) {
+            throw new AccountNotFoundException(accountId);
+        }
+        return account;
+    }
+
     public AccountEntity requireAccount(Long accountId) {
         AccountEntity account = accountMapper.selectById(accountId);
         if (account == null) {

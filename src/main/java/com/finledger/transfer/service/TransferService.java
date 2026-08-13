@@ -3,6 +3,7 @@ package com.finledger.transfer.service;
 import com.finledger.account.entity.AccountEntity;
 import com.finledger.account.exception.AccountNotActiveException;
 import com.finledger.account.mapper.AccountMapper;
+import com.finledger.account.service.LockedTransferAccounts;
 import com.finledger.account.service.AccountService;
 import com.finledger.common.money.MoneyAmounts;
 import com.finledger.ledger.entity.TransactionRecordEntity;
@@ -55,8 +56,11 @@ public class TransferService {
             throw new SameAccountTransferException();
         }
         BigDecimal amount = MoneyAmounts.requirePositive(request.amount());
-        AccountEntity fromAccount = accountService.requireOwnedAccount(userId, request.fromAccountId());
-        AccountEntity toAccount = accountService.requireAccount(request.toAccountId());
+        LockedTransferAccounts lockedAccounts = accountService.lockTransferAccounts(
+                userId, request.fromAccountId(), request.toAccountId()
+        );
+        AccountEntity fromAccount = lockedAccounts.fromAccount();
+        AccountEntity toAccount = lockedAccounts.toAccount();
 
         requireActive(fromAccount);
         requireActive(toAccount);

@@ -3,6 +3,7 @@ package com.finledger.transfer.service;
 import com.finledger.account.entity.AccountEntity;
 import com.finledger.account.mapper.AccountMapper;
 import com.finledger.account.service.AccountService;
+import com.finledger.account.service.LockedTransferAccounts;
 import com.finledger.ledger.entity.TransactionRecordEntity;
 import com.finledger.ledger.generator.TransactionRecordNumberGenerator;
 import com.finledger.ledger.mapper.TransactionRecordMapper;
@@ -52,8 +53,8 @@ class TransferServiceTest {
     void shouldTransferAndWriteTwoJournalRecords() {
         AccountEntity from = account(1L, 10L, "100.00");
         AccountEntity to = account(2L, 20L, "20.00");
-        when(accountService.requireOwnedAccount(10L, 1L)).thenReturn(from);
-        when(accountService.requireAccount(2L)).thenReturn(to);
+        when(accountService.lockTransferAccounts(10L, 1L, 2L))
+                .thenReturn(new LockedTransferAccounts(from, to));
         when(accountMapper.updateById(any(AccountEntity.class))).thenReturn(1);
         when(transferNumberGenerator.nextTransferNo()).thenReturn("TF001");
         doAnswer(invocation -> {
@@ -82,8 +83,8 @@ class TransferServiceTest {
     void shouldRejectInsufficientBalanceBeforeUpdates() {
         AccountEntity from = account(1L, 10L, "50.00");
         AccountEntity to = account(2L, 20L, "0.00");
-        when(accountService.requireOwnedAccount(10L, 1L)).thenReturn(from);
-        when(accountService.requireAccount(2L)).thenReturn(to);
+        when(accountService.lockTransferAccounts(10L, 1L, 2L))
+                .thenReturn(new LockedTransferAccounts(from, to));
 
         assertThatThrownBy(() -> transferService.transfer(
                 10L, new TransferRequest(1L, 2L, new BigDecimal("80.00"))

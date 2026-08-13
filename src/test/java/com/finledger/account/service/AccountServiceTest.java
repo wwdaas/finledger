@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -67,6 +68,22 @@ class AccountServiceTest {
 
         assertThatThrownBy(() -> accountService.getOwnedAccount(1L, 10L))
                 .isInstanceOf(AccountAccessDeniedException.class);
+    }
+
+    @Test
+    void shouldLockTransferAccountsInAscendingIdOrder() {
+        AccountEntity lower = account(10L, 2L);
+        AccountEntity higher = account(20L, 1L);
+        when(accountMapper.selectByIdForUpdate(10L)).thenReturn(lower);
+        when(accountMapper.selectByIdForUpdate(20L)).thenReturn(higher);
+
+        LockedTransferAccounts result = accountService.lockTransferAccounts(1L, 20L, 10L);
+
+        org.mockito.InOrder lockOrder = inOrder(accountMapper);
+        lockOrder.verify(accountMapper).selectByIdForUpdate(10L);
+        lockOrder.verify(accountMapper).selectByIdForUpdate(20L);
+        assertThat(result.fromAccount().getId()).isEqualTo(20L);
+        assertThat(result.toAccount().getId()).isEqualTo(10L);
     }
 
     private AccountEntity account(Long id, Long userId) {
