@@ -2,13 +2,14 @@ package com.finledger.account.controller;
 
 import com.finledger.account.dto.AccountResponse;
 import com.finledger.account.service.AccountService;
-import jakarta.validation.constraints.Positive;
+import com.finledger.security.CurrentUser;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -20,8 +21,6 @@ import java.util.List;
 @RequestMapping("/api/accounts")
 public class AccountController {
 
-    private static final String USER_ID_HEADER = "X-User-Id";
-
     private final AccountService accountService;
 
     public AccountController(AccountService accountService) {
@@ -31,23 +30,23 @@ public class AccountController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public AccountResponse create(
-            @Positive @RequestHeader(USER_ID_HEADER) Long currentUserId
+            @AuthenticationPrincipal Jwt jwt
     ) {
-        return accountService.create(currentUserId);
+        return accountService.create(CurrentUser.id(jwt));
     }
 
     @GetMapping
     public List<AccountResponse> list(
-            @Positive @RequestHeader(USER_ID_HEADER) Long currentUserId
+            @AuthenticationPrincipal Jwt jwt
     ) {
-        return accountService.listByUser(currentUserId);
+        return accountService.listByUser(CurrentUser.id(jwt));
     }
 
     @GetMapping("/{accountId}")
     public AccountResponse getById(
-            @Positive @RequestHeader(USER_ID_HEADER) Long currentUserId,
-            @Positive @PathVariable Long accountId
+            @AuthenticationPrincipal Jwt jwt,
+            @jakarta.validation.constraints.Positive @PathVariable Long accountId
     ) {
-        return accountService.getOwnedAccount(currentUserId, accountId);
+        return accountService.getOwnedAccount(CurrentUser.id(jwt), accountId);
     }
 }

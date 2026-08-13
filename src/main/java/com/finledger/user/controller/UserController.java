@@ -3,12 +3,13 @@ package com.finledger.user.controller;
 import com.finledger.user.dto.RegisterUserRequest;
 import com.finledger.user.dto.UserResponse;
 import com.finledger.user.service.UserService;
+import com.finledger.security.CurrentUser;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Positive;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,8 +33,8 @@ public class UserController {
         return userService.register(request);
     }
 
-    @GetMapping("/{userId}")
-    public UserResponse getById(@Positive @PathVariable Long userId) {
-        return userService.getById(userId);
+    @GetMapping("/me")
+    public UserResponse getCurrentUser(@AuthenticationPrincipal Jwt jwt) {
+        return userService.getById(CurrentUser.id(jwt));
     }
 }
