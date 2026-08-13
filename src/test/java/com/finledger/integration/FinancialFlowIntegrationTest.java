@@ -6,6 +6,7 @@ import com.finledger.account.exception.AccountNotFoundException;
 import com.finledger.account.mapper.AccountMapper;
 import com.finledger.account.service.AccountService;
 import com.finledger.ai.dto.AiAnalysisResponse;
+import com.finledger.ai.service.AiRiskExplanationService;
 import com.finledger.ai.service.AiTransactionAssistantService;
 import com.finledger.common.money.InvalidAmountException;
 import com.finledger.idempotency.mapper.IdempotencyRecordMapper;
@@ -93,6 +94,7 @@ class FinancialFlowIntegrationTest {
     @Autowired private CancellationService cancellationService;
     @Autowired private RiskEventQueryService riskEventQueryService;
     @Autowired private AiTransactionAssistantService aiAssistantService;
+    @Autowired private AiRiskExplanationService aiRiskExplanationService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private MockMvc mockMvc;
 
@@ -487,6 +489,29 @@ class FinancialFlowIntegrationTest {
                 .extracting(event -> event.ruleCode())
                 .containsExactly("DAILY_LIMIT");
         assertThat(riskEventMapper.selectCount(null)).isEqualTo(2);
+    }
+
+    @Test
+    void shouldExplainOnlyTheAuthenticatedUsersDeferredTransaction() {
+        Long owner = createUser("ai_risk_owner");
+        Long receiver = createUser("ai_risk_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("60000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("50000.01"))
+        );
+        String question = "交易 " + pending.transferNo() + " 为什么触发风控？";
+
+        var explanation = aiRiskExplanationService.explain(owner, question);
+
+        assertThat(explanation.transactionNo()).isEqualTo(pending.transferNo());
+        assertThat(explanation.status()).isEqualTo("PENDING");
+        assertThat(explanation.riskDecision()).isEqualTo("REVIEW");
+        assertThat(explanation.riskEvents()).extracting(event -> event.ruleCode())
+                .containsExactly("HIGH_AMOUNT");
+        assertThatThrownBy(() -> aiRiskExplanationService.explain(receiver, question))
+                .isInstanceOf(com.finledger.settlement.exception.TransactionNotFoundException.class);
     }
 
     private static MySQLContainer mysqlContainer() {

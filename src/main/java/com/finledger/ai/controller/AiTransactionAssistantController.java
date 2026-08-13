@@ -2,6 +2,8 @@ package com.finledger.ai.controller;
 
 import com.finledger.ai.dto.AiAnalysisResponse;
 import com.finledger.ai.dto.AiQueryRequest;
+import com.finledger.ai.dto.AiRiskExplanationResponse;
+import com.finledger.ai.service.AiRiskExplanationService;
 import com.finledger.ai.service.AiTransactionAssistantService;
 import com.finledger.security.CurrentUser;
 import jakarta.validation.Valid;
@@ -17,9 +19,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class AiTransactionAssistantController {
 
     private final AiTransactionAssistantService assistantService;
+    private final AiRiskExplanationService riskExplanationService;
 
-    public AiTransactionAssistantController(AiTransactionAssistantService assistantService) {
+    public AiTransactionAssistantController(
+            AiTransactionAssistantService assistantService,
+            AiRiskExplanationService riskExplanationService
+    ) {
         this.assistantService = assistantService;
+        this.riskExplanationService = riskExplanationService;
     }
 
     @PostMapping("/query")
@@ -28,5 +35,13 @@ public class AiTransactionAssistantController {
             @Valid @RequestBody AiQueryRequest request
     ) {
         return assistantService.ask(CurrentUser.id(jwt), request.question());
+    }
+
+    @PostMapping("/explain")
+    public AiRiskExplanationResponse explain(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody AiQueryRequest request
+    ) {
+        return riskExplanationService.explain(CurrentUser.id(jwt), request.question());
     }
 }
