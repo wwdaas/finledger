@@ -13,14 +13,17 @@ Phase 0—17 已完成，核心能力包括：
 - 同源响应式 Web 工作台，覆盖注册、登录、账户、充值、转账、流水与 AI 查询；
 - 用户注册、BCrypt 密码存储、登录和 HS256 JWT 鉴权；
 - 模拟资金账户创建、归属校验、余额查询和模拟充值；
+- `balance = availableBalance + frozenBalance` 双余额模型、冻结与解冻；
+- `PENDING → SETTLED / CANCELLED` 交易状态机与并发状态竞争保护；
 - `@Transactional` 原子转账、余额校验和双边交易流水；
 - `SELECT ... FOR UPDATE` 悲观锁及固定账户 ID 加锁顺序；
 - `Idempotency-Key`、请求摘要、MySQL 唯一约束和响应回放；
 - Redis Lua 固定窗口限流，Redis 故障时不影响 MySQL 核心一致性；
+- Strategy 风控规则（大额、高频、自然日累计限额）及持久化风险事件；
 - 统一业务异常、参数异常、401/403 和安全错误响应；
 - JUnit 5、Mockito、Spring MVC、Testcontainers + MySQL 8 测试；
 - 多阶段 Docker 镜像、非 root 运行、Compose 健康检查和 GitHub Actions；
-- 只读 AI 交易分析助手，模型不能访问数据库、执行 SQL 或修改余额。
+- 只读 AI 交易分析与风控解释助手，模型不能访问数据库、执行 SQL 或修改余额。
 
 ## 技术栈
 
@@ -42,7 +45,10 @@ flowchart LR
     Client[客户端] --> Security[Spring Security / JWT]
     Security --> Controller[REST Controllers]
     Controller --> Service[领域 Services]
-    Service --> Mapper[MyBatis-Plus Mappers]
+    Service --> Settlement[冻结 / 清算 / 撤销]
+    Service --> Risk[Strategy 风控引擎]
+    Settlement --> Mapper[MyBatis-Plus Mappers]
+    Risk --> Mapper
     Mapper --> MySQL[(MySQL 8\n余额与交易事实源)]
     Service --> Limiter[Redis Lua 限流]
     Assistant[AI 交易助手] --> Intent[受控意图与参数]
@@ -58,6 +64,8 @@ flowchart LR
 | `user` / `auth` / `security` | 用户、登录、JWT 身份与权限边界 |
 | `account` / `recharge` | 账户状态、所有权、余额和模拟充值 |
 | `transfer` | 转账编排、账户更新、订单写入 |
+| `settlement` | 资金冻结、清算、撤销和集中状态机 |
+| `risk` | 可配置规则、统一决策和风险事件审计 |
 | `ledger` | 不可变交易流水与分页查询 |
 | `idempotency` | 请求占位、唯一约束、摘要校验和响应回放 |
 | `ratelimit` | 非核心 Redis 限流 |
@@ -94,17 +102,41 @@ sequenceDiagram
 失败都会回滚。相同用户并发使用相同 key 时，唯一约束决定唯一执行者；成功后的重试
 返回原响应，不再修改余额。
 
+## Trading Lifecycle
+
+```text
+CREATE
+  ↓
+PENDING
+  ├──→ SETTLED
+  └──→ CANCELLED
+```
+
+创建待处理交易时，来源账户从可用资金转入冻结资金，总额不变。清算时冻结资金从来源账户
+最终扣减并记入目标账户；撤销时冻结资金原子退回可用资金。`SETTLED` 和 `CANCELLED` 都是
+终态，同一笔 `PENDING` 交易并发收到清算和撤销时，订单行锁、集中状态校验以及
+`WHERE status = 'PENDING'` 条件更新共同保证只能一个成功。
+
+```text
+可用资金 ──冻结──> 冻结资金 ──清算──> 目标账户
+                         └──解冻──> 可用资金
+```
+
+详见 [settlement.md](docs/settlement.md)。
+
 ## 数据模型
 
-第一版严格控制为五张核心表：
+V1 从五张核心表起步；V2 以增量迁移加入资金变动和风控审计，共七张表：
 
 | 表 | 用途 | 关键约束 |
 | --- | --- | --- |
 | `sys_user` | 用户身份和状态 | 用户名唯一 |
-| `account` | 当前余额和账户状态 | `DECIMAL(19,2)`、余额非负、账户号唯一 |
-| `transfer_order` | 一笔转账的业务事实 | 转账号唯一、金额为正、账户不同 |
+| `account` | 总额、可用额、冻结额和账户状态 | 三者非负且总额等于可用加冻结 |
+| `transfer_order` | 立即或待处理转账的业务事实 | 状态、风控结论、金额和账户约束 |
 | `transaction_record` | 每次余额变化的不可变流水 | 业务/账户/方向唯一、前后余额可核对 |
 | `idempotency_record` | 请求执行权和结果 | `(user_id, business_type, key)` 唯一 |
+| `fund_movement_record` | 冻结、清算、解冻的资金快照 | 业务/账户/动作唯一、前后值可核对 |
+| `risk_event` | 每条命中规则的可追溯判断 | 业务/规则唯一、绑定用户与订单 |
 
 `account.balance` 适合快速读取当前状态；`transaction_record` 用于历史、审计和对账。
 二者用途不同，不能只保存其中一个。完整 DDL 和取舍见
@@ -125,8 +157,14 @@ sequenceDiagram
 | `GET` | `/api/accounts/{id}` | 查询自己的单个账户 |
 | `POST` | `/api/accounts/{id}/recharges` | 模拟充值 |
 | `POST` | `/api/transfers` | 幂等转账，必须带 `Idempotency-Key` |
+| `POST` | `/api/transfers/pending` | 创建待处理交易并冻结来源资金 |
+| `GET` | `/api/transfers/{id}` | 查询本人待处理交易 |
+| `POST` | `/api/transfers/{id}/settlement` | 清算一笔 PENDING 交易 |
+| `POST` | `/api/transfers/{id}/cancellation` | 撤销交易并解冻 |
 | `GET` | `/api/transactions` | 分页筛选自己的交易流水 |
+| `GET` | `/api/risk-events` | 查询自己的风险事件 |
 | `POST` | `/api/ai/transactions/query` | 自然语言查询自己的交易数据 |
+| `POST` | `/api/ai/transactions/explain` | 解释本人交易状态和风控原因 |
 
 ## 前端操作界面
 
@@ -137,8 +175,9 @@ http://localhost:8080/
 ```
 
 前端位于 `src/main/resources/static`，随 Spring Boot 一起构建和部署，不需要额外安装
-Node.js。页面包括登录/注册、资金总览、账户管理、模拟充值、幂等转账、分页流水和只读
-AI 助手。JWT 只保存在当前浏览器标签页的 `sessionStorage`，关闭标签页后需要重新登录。
+Node.js。页面包括登录/注册、总额/可用/冻结余额、模拟充值、立即转账、待处理交易生命周期、
+风险事件、分页流水和只读 AI 助手。JWT 只保存在当前浏览器标签页的 `sessionStorage`，关闭
+标签页后需要重新登录。
 
 静态首页和 CSS/JavaScript 可以匿名加载，所有账户与交易接口仍由 Spring Security 验证
 JWT；前端不会改变服务端的账户归属、事务、锁或幂等规则。
@@ -179,8 +218,9 @@ docker compose up -d mysql redis
 docker compose ps
 ```
 
-DDL 会在全新 MySQL 数据卷首次初始化时自动执行。Docker 的初始化目录不会对已有数据卷
-重复执行脚本；已有空库可按 [database-design.md](docs/database-design.md) 中的命令手动应用。
+DDL 会在全新 MySQL 数据卷首次初始化时按 V1、V2 顺序自动执行。Docker 的初始化目录不会
+对已有数据卷重复执行脚本；已有 V1 数据库需按 [database-design.md](docs/database-design.md)
+先备份、检查再单独应用 V2。
 
 本机运行应用：
 
@@ -238,7 +278,7 @@ curl http://localhost:8080/api/accounts \
 ./mvnw test
 ```
 
-当前套件共 39 个测试，覆盖：
+当前套件共 60 个测试，覆盖：
 
 - 正常转账和双边流水；
 - 余额不足、非法金额、账户不存在和越权访问；
@@ -247,7 +287,11 @@ curl http://localhost:8080/api/accounts \
 - 两线程重复同一个 `Idempotency-Key` 时只执行一次；
 - JWT 缺失、无效 token 和已验证用户身份传递；
 - Redis Lua 限流和 Redis 故障时的 fail-open 行为；
-- AI 只查询 JWT 用户自己的交易数据。
+- AI 只查询 JWT 用户自己的交易数据；
+- 冻结余额不足、正常清算、撤销、重复终态操作；
+- 两线程并发清算/撤销同一订单时只能一个成功且资金守恒；
+- HIGH_AMOUNT、HIGH_FREQUENCY、DAILY_LIMIT 与风险事件落库；
+- AI 只能解释当前 JWT 用户自己的交易和风险记录。
 
 集成测试会启动一次性 MySQL 8.4 容器，执行正式 DDL，不读写本机开发库。详细策略见
 [testing-strategy.md](docs/testing-strategy.md)。
@@ -262,6 +306,17 @@ curl http://localhost:8080/api/accounts \
    摘要还要阻止同一 key 被复用于不同参数。
 5. **可信边界**：JWT 用户身份不能来自可伪造请求参数；Redis 和 LLM 都不能成为余额、
    交易结果或权限判断的最终权威。
+
+## 风控边界
+
+- `HIGH_AMOUNT`：单笔超过配置阈值，结果 `REVIEW`，允许进入 PENDING；
+- `HIGH_FREQUENCY`：Redis Lua 统计短窗口频率，命中为 `REVIEW`；Redis 不可用时 fail-open，
+  只降低辅助风控能力，不破坏资金一致性；
+- `DAILY_LIMIT`：基于 MySQL 已接受订单计算 UTC 自然日累计，超过阈值为 `REJECT`，不冻结资金；
+- `risk_event` 与订单决策共同保存，AI 只能解释已产生的结论。
+
+规则阈值和总开关由 `finledger.risk.*` 配置管理，设计取舍见
+[risk-control.md](docs/risk-control.md)。
 
 ## 关键设计结论
 
@@ -281,6 +336,7 @@ curl http://localhost:8080/api/accounts \
 - “我这个月转出去多少钱？”
 - “上个月最大的五笔支出是什么？”
 - “最近有没有超过 1000 元的大额交易？”
+- “交易 TF0123456789ABCDEF01234567 为什么触发风控？”
 
 启用外部模型后，模型只负责把问题映射为严格 JSON Schema 意图，以及解释 Java 已授权的
 结构化结果。用户 ID 始终来自 JWT；查询 SQL 预先写在 Mapper 中并强制带 `user_id`；模型
@@ -292,6 +348,8 @@ curl http://localhost:8080/api/accounts \
 - [架构与核心时序](docs/architecture.md)
 - [数据库设计](docs/database-design.md)
 - [并发控制](docs/concurrency-control.md)
+- [冻结、清算与状态机](docs/settlement.md)
+- [风控规则与事务边界](docs/risk-control.md)
 - [转账幂等](docs/idempotency.md)
 - [JWT 认证](docs/authentication.md)
 - [Redis 使用边界](docs/redis-boundaries.md)

@@ -6,8 +6,9 @@ FinLedger 是一个基于 Java 17 和 Spring Boot 3 的模块化单体资金账�
 转账和流水。项目重点是资金一致性：我用 MySQL 本地事务保证扣款、入账、订单和双边流水
 原子提交；用 `SELECT ... FOR UPDATE` 防止并发超扣，并按账户 ID 固定加锁顺序降低死锁；
 用数据库唯一约束和请求摘要实现 `Idempotency-Key`。Redis 只承担可降级限流，余额始终以
-MySQL 为准。测试使用 Testcontainers 在真实 MySQL 上验证回滚、并发和幂等。AI 助手只做
-受控交易查询，模型不能执行 SQL 或修改资金。
+MySQL 为准。我还实现了 available/frozen 双余额、PENDING/SETTLED/CANCELLED 状态机和
+可扩展风控策略。测试使用 Testcontainers 在真实 MySQL 上验证回滚、并发、幂等和清算/撤销
+竞争。AI 助手只做受控交易查询与风控解释，模型不能执行 SQL 或修改资金。
 
 ## 高频问题与回答要点
 
@@ -82,6 +83,65 @@ Service 查询账户和流水时继续带用户归属条件。认证证明“你
 预定义且绑定 JWT userId 的 Mapper 查询。模型只收到授权后的结构化结果进行解释，没有数据库
 凭证和写操作工具，因此提示注入不能直接变成资金操作。
 
+### 13. 为什么账户要区分 availableBalance 和 frozenBalance？
+
+总额表示资产现状，可用额表示还能参与新交易的资金，冻结额表示已为待处理交易预留的资金。
+如果不冻结，只写 PENDING 订单，并发请求仍可重复花掉同一笔钱。项目保留 `balance` 作为兼容
+总额，并由数据库约束保证 `balance = available + frozen`。
+
+### 14. 为什么提交待处理交易时不能直接永久扣款？
+
+待处理业务在最终确认前可能被撤销或风控复核。直接扣款会混淆“预留”和“最终资金转移”，
+补偿也更难解释。冻结只改变可用与冻结的组成，总额不变；SETTLED 才最终扣减来源总额并给
+目标入账，CANCELLED 则原子解冻。
+
+### 15. 冻结和解冻如何保证原子性？
+
+冻结把可用减、冻结加、创建订单和写资金变动记录放进同一个 Spring/MySQL 事务；解冻把冻结
+减、可用加、写 UNFREEZE 记录和订单终态放入另一个事务。异常会整体回滚，数据库非负与总额
+等式约束再提供最后防线。
+
+### 16. SETTLE 和 CANCEL 并发怎么办？
+
+两者先锁同一订单行。一个事务提交后，另一个读取到的就是终态，状态机拒绝继续。最终状态更新
+还带 `WHERE status='PENDING'`，影响行数必须为 1，否则抛异常并回滚。本项目用两个真实线程
+在 MySQL Testcontainers 中验证恰好一个成功且资金守恒。
+
+### 17. 为什么使用状态机？
+
+状态机把合法流转集中在一个 Service 组件中，避免每个 Controller 或 Service 各自判断，导致
+某条路径允许 SETTLED→CANCELLED。它让终态、错误语义和并发测试目标都清晰；Controller 没有
+通用“修改 status”接口。
+
+### 18. 风控规则为什么不能全部写在 TransferService？
+
+大额、高频、日限额依赖的数据源和事务阶段不同。全部塞入转账服务会形成难测试的大方法，每加
+规则都修改核心资金代码。独立风险模块让资金编排只消费统一评估结果，规则可以单独配置和测试。
+
+### 19. Strategy Pattern 在风控模块如何使用？
+
+每条规则实现 `RiskRule.evaluate(RiskContext)`，Spring 注入策略集合，RiskEngine 按阶段运行并
+聚合成最严格的 PASS/REVIEW/REJECT。新增规则无需修改已有规则，符合开闭原则；规则只返回
+判断，不直接写余额或订单。
+
+### 20. Redis 挂了以后风险控制和交易分别怎么办？
+
+Redis 高频规则 fail-open 并记录告警，因此短窗口辅助信号暂时降级。账户行锁、余额约束、
+MySQL DAILY_LIMIT、订单和流水仍正常工作。选择 fail-open 是因为 Redis 不应成为资金一致性的
+单点；生产上可配合监控或在更高风险场景切换人工复核策略。
+
+### 21. 为什么 AI 只能解释风控结果而不能决定资金操作？
+
+模型输出不稳定且可能受提示注入影响，不能成为可审计的资金决策者。PASS/REVIEW/REJECT 由
+Java 风控规则产生并保存，AI 只接收已授权的交易和 risk_event 结构化结果，生成便于用户理解
+的说明，系统没有向模型暴露任何写资金工具。
+
+### 22. 如何保证 AI 不发生水平越权？
+
+transactionNo 可以来自问题，但 userId 只能来自验证后的 JWT。Java 查询同时限制交易号、
+`initiator_user_id` 和 DEFERRED 类型，风险事件查询也强制绑定同一 userId。只有这两次权限查询
+成功后的数据才会传给解释器；测试证明收款人即使知道交易号也无法获取付款人的状态、风险和余额。
+
 ## 代码讲解路线
 
 面试现场可以按以下顺序打开代码：
@@ -92,7 +152,9 @@ Service 查询账户和流水时继续带用户归属条件。认证证明“你
 4. `AccountService.lockTransferAccounts`：展示固定锁顺序；
 5. `TransferService`：展示校验、双账户更新、订单和双边流水；
 6. `FinancialFlowIntegrationTest`：用真实数据库测试证明设计；
-7. `AiTransactionAssistantService`：解释 LLM 与核心系统之间的安全边界。
+7. `PendingTransferExecutor` / `SettlementService`：展示双余额与状态竞争；
+8. `RiskEngine` 与三条 `RiskRule`：展示策略聚合和事务阶段；
+9. `AiRiskExplanationService`：解释 LLM 与核心系统之间的权限边界。
 
 不要只背注解作用。重点说明每个设计在防止什么具体失败，以及测试如何证明它。
 
@@ -108,8 +170,12 @@ Service 查询账户和流水时继续带用户归属条件。认证证明“你
   回放与 key 参数冲突检测；
 - 设计余额快照与双边不可变流水，在数据库约束和异常注入测试下验证订单、流水与余额一致回滚；
 - 使用 Redis Lua 实现按用户转账限流，明确 MySQL 为核心事实源，并实现 Redis 故障降级策略；
+- 设计 available/frozen 双余额模型和 PENDING/SETTLED/CANCELLED 状态机，在本地事务中实现
+  冻结、结算与取消解冻，并以订单行锁和条件更新解决并发终态竞争；
+- 基于 Strategy 模式实现大额、高频、自然日累计限额三类风控规则，统一聚合
+  PASS/REVIEW/REJECT，并持久化可追溯 Risk Event；
 - 构建只读 AI 交易分析流水线，以严格结构化意图、Java 参数校验、JWT 数据隔离和预定义 SQL
-  防止模型越权或直接操作资金。
+  防止模型越权或直接操作资金，并支持解释本人交易状态和既有风控结果。
 
 不应声称：连接真实银行、支持真实支付清算、达到生产金融合规、彻底消除死锁，或外部模型已经
 在无 API key 的环境中完成线上调用。

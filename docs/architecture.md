@@ -30,6 +30,8 @@ flowchart TB
         US[User + Authentication]
         AS[Account + Recharge]
         TS[Idempotent Transfer Executor]
+        SS[Pending + Settlement + Cancellation]
+        RS[Risk Engine + Rules]
         LS[Transaction Record]
         AIS[AI Assistant Pipeline]
     end
@@ -39,6 +41,8 @@ flowchart TB
         AM[Account Mapper]
         TM[Transfer + Idempotency Mappers]
         LM[Transaction Record Mapper]
+        FM[Fund Movement Mapper]
+        RM[Risk Event Mapper]
     end
 
     subgraph External[基础设施]
@@ -53,10 +57,16 @@ flowchart TB
     UC --> US --> UM --> DB
     BC --> AS --> AM --> DB
     BC --> TS
+    BC --> SS
     TS --> AM
     TS --> TM --> DB
     TS --> LM --> DB
     TS --> RD
+    SS --> RS
+    RS --> RD
+    SS --> AM
+    SS --> FM --> DB
+    RS --> RM --> DB
     BC --> LS --> LM
     AC --> AIS --> LM
     AIS -. 仅意图与解释 .-> LLM
@@ -145,20 +155,50 @@ sequenceDiagram
 `after = before - amount`，贷记满足 `after = before + amount`。当前余额负责快速读，流水负责
 解释“余额为什么是这个数”以及后续对账。
 
+## 待处理交易与风控事务
+
+待处理交易没有改变原有立即转账接口，而是在 `settlement` 模块复用账户锁、订单和双边流水。
+创建 PENDING 时可用额转为冻结额，总额不变；SETTLED 时来源冻结额最终扣减、目标可用额增加；
+CANCELLED 时冻结额回到来源可用额。
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant P as PendingTransferService
+    participant R as RiskEngine
+    participant D as MySQL Transaction
+    participant X as Settlement / Cancellation
+
+    C->>P: 创建待处理交易
+    P->>R: 请求型规则（大额 / Redis 高频）
+    P->>D: 锁用户、按 ID 锁账户
+    D->>R: 事实型规则（自然日限额）
+    R->>D: 保存 risk_event
+    D->>D: 冻结资金 + PENDING + movement
+    C->>X: SETTLE 或 CANCEL
+    X->>D: 锁订单并校验状态
+    D->>D: 条件更新 WHERE status=PENDING
+```
+
+SETTLE 与 CANCEL 对同一订单竞争行锁。获胜事务提交终态后，另一个事务看到最新状态并失败；
+条件 UPDATE 再防止陈旧状态覆盖。详细不变量见 [settlement.md](settlement.md)，风险阶段取舍见
+[risk-control.md](risk-control.md)。
+
 ## AI 安全边界
 
 ```mermaid
 flowchart LR
-    Q[用户问题] --> I[规则或 LLM 意图识别]
+    Q[用户问题] --> I[规则或 LLM 意图/交易号识别]
     I --> V[Java 枚举、条数、金额、时间校验]
     V --> U[JWT userId]
-    U --> SQL[带 user_id 的预定义 Mapper SQL]
+    U --> SQL[带 user_id 的预定义 Mapper / Service 查询]
     SQL --> D[结构化授权数据]
     D --> E[确定性或 LLM 解释]
     E --> A[只读回答]
 ```
 
-LLM 不接收 JDBC 连接，不生成可执行 SQL，也没有充值或转账工具。即使模型输出越界参数，
+交易状态解释先提取 `transactionNo`，Java 再按 JWT userId 查询本人 DEFERRED 订单及
+`risk_event`；知道其他人的交易号也只会得到 not found。LLM 不接收 JDBC 连接，不生成可执行 SQL，也没有充值、冻结、清算或转账工具。即使模型输出越界参数，
 Java 仍会把意图限制在固定枚举、最多 10 条和合法金额范围；最终数据查询始终绑定 JWT 用户。
 
 ## 部署视图

@@ -1,6 +1,7 @@
 # AI 交易分析助手
 
-AI 助手是只读功能，接口为 `POST /api/ai/transactions/query`。流程固定为：
+AI 助手是只读功能，提供交易分析 `/api/ai/transactions/query` 和交易状态/风控解释
+`/api/ai/transactions/explain`。分析流程固定为：
 
 ```text
 自然语言 -> 受控意图 -> Java 校验 -> 带 user_id 的预定义查询
@@ -11,8 +12,20 @@ AI 助手是只读功能，接口为 `POST /api/ai/transactions/query`。流程�
 数据库连接，也不能生成或执行 SQL；所有 mapper 查询都预先写在 Java 中，并强制包含
 JWT 用户 ID。系统没有向 AI 暴露充值、转账或余额更新工具。
 
+状态解释流程为：
+
+```text
+问题 -> 提取 transactionNo -> JWT userId -> Java 查询本人 DEFERRED 订单
+     -> Java 查询本人 risk_event -> 授权结构化数据 -> 只读解释
+```
+
+交易号可以来自 Prompt，用户 ID 绝不能来自 Prompt 或请求体。`DeferredTransferQueryService`
+同时限制交易号、`initiator_user_id` 和订单类型，风险事件也绑定同一 userId；因此知道其他用户
+的交易号仍无法查询其交易、风控记录或资金状态。风险决策已经由 Java 规则产生，AI 不能重新
+判定 PASS/REVIEW/REJECT。
+
 默认 `AI_ENABLED=false`，使用规则解析和确定性解释，方便无 API key 演示。启用后，
-应用通过 OpenAI Responses API 获取意图和解释。意图使用严格 JSON Schema，之后仍由
+应用通过 OpenAI Responses API 获取意图和解释。分析意图使用严格 JSON Schema，之后仍由
 Java 二次限制枚举、时间窗口、最多 10 条结果和金额精度。官方 Structured Outputs 文档：
 <https://developers.openai.com/api/docs/guides/structured-outputs>。
 
