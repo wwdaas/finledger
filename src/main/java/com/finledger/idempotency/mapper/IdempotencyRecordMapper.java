@@ -1,0 +1,9 @@
+package com.finledger.idempotency.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.finledger.idempotency.entity.IdempotencyRecordEntity;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface IdempotencyRecordMapper extends BaseMapper<IdempotencyRecordEntity> {
+}
