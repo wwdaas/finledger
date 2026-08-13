@@ -2,6 +2,7 @@ package com.finledger.transfer.service;
 
 import com.finledger.idempotency.service.IdempotencyReplayService;
 import com.finledger.idempotency.service.IdempotencyRequestHasher;
+import com.finledger.ratelimit.service.TransferRateLimiter;
 import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.dto.TransferResponse;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ class IdempotentTransferServiceTest {
     @Mock private IdempotentTransferExecutor executor;
     @Mock private IdempotencyReplayService replayService;
     @Mock private IdempotencyRequestHasher requestHasher;
+    @Mock private TransferRateLimiter rateLimiter;
 
     @Test
     void shouldReplayCommittedResponseWhenDatabaseRejectsDuplicateClaim() {
@@ -33,7 +35,7 @@ class IdempotentTransferServiceTest {
         when(replayService.replay(7L, "key-1", "hash")).thenReturn(response);
 
         IdempotentTransferService service =
-                new IdempotentTransferService(executor, replayService, requestHasher);
+                new IdempotentTransferService(executor, replayService, requestHasher, rateLimiter);
 
         assertThat(service.transfer(7L, "key-1", request)).isSameAs(response);
     }
