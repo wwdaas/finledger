@@ -83,6 +83,17 @@ public class AccountService {
         return account;
     }
 
+    public AccountEntity lockOwnedAccount(Long userId, Long accountId) {
+        AccountEntity account = accountMapper.selectByIdForUpdate(accountId);
+        if (account == null) {
+            throw new AccountNotFoundException(accountId);
+        }
+        if (!account.getUserId().equals(userId)) {
+            throw new AccountAccessDeniedException(accountId);
+        }
+        return account;
+    }
+
     public AccountEntity requireAccount(Long accountId) {
         AccountEntity account = accountMapper.selectById(accountId);
         if (account == null) {
