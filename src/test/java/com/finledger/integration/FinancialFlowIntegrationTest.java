@@ -12,6 +12,9 @@ import com.finledger.idempotency.mapper.IdempotencyRecordMapper;
 import com.finledger.ledger.entity.TransactionRecordEntity;
 import com.finledger.ledger.mapper.TransactionRecordMapper;
 import com.finledger.recharge.service.RechargeService;
+import com.finledger.risk.exception.RiskRejectedException;
+import com.finledger.risk.mapper.RiskEventMapper;
+import com.finledger.risk.service.RiskEventQueryService;
 import com.finledger.settlement.exception.InsufficientAvailableBalanceException;
 import com.finledger.settlement.mapper.FundMovementRecordMapper;
 import com.finledger.settlement.service.PendingTransferService;
@@ -80,6 +83,7 @@ class FinancialFlowIntegrationTest {
     @Autowired private TransferOrderMapper transferOrderMapper;
     @Autowired private TransactionRecordMapper transactionRecordMapper;
     @Autowired private FundMovementRecordMapper fundMovementRecordMapper;
+    @Autowired private RiskEventMapper riskEventMapper;
     @Autowired private IdempotencyRecordMapper idempotencyRecordMapper;
     @Autowired private AccountService accountService;
     @Autowired private RechargeService rechargeService;
@@ -87,6 +91,7 @@ class FinancialFlowIntegrationTest {
     @Autowired private PendingTransferService pendingTransferService;
     @Autowired private SettlementService settlementService;
     @Autowired private CancellationService cancellationService;
+    @Autowired private RiskEventQueryService riskEventQueryService;
     @Autowired private AiTransactionAssistantService aiAssistantService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private MockMvc mockMvc;
@@ -428,6 +433,60 @@ class FinancialFlowIntegrationTest {
             assertThat(balance(to)).isEqualByComparingTo("0.00");
         }
         assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(2);
+    }
+
+    @Test
+    void shouldPersistHighAmountReviewAndAllowPendingTransfer() {
+        Long owner = createUser("risk_high_owner");
+        Long receiver = createUser("risk_high_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("60000.00"));
+
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("50000.01"))
+        );
+
+        assertThat(pending.status()).isEqualTo("PENDING");
+        assertThat(pending.riskDecision()).isEqualTo("REVIEW");
+        assertThat(riskEventQueryService.findByBusinessNo(owner, pending.transferNo()))
+                .extracting(event -> event.ruleCode())
+                .containsExactly("HIGH_AMOUNT");
+        assertThat(riskEventQueryService.findByBusinessNo(receiver, pending.transferNo()))
+                .isEmpty();
+    }
+
+    @Test
+    void shouldPersistDailyLimitRejectionWithoutFreezingMoreFunds() {
+        Long owner = createUser("risk_daily_owner");
+        Long receiver = createUser("risk_daily_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("250000.00"));
+        pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("190000.00"))
+        );
+
+        RiskRejectedException rejected = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> pendingTransferService.createPending(
+                        owner, new TransferRequest(from, to, money("20000.01"))
+                ),
+                RiskRejectedException.class
+        );
+
+        assertThat(rejected).isNotNull();
+        assertThat(balance(from)).isEqualByComparingTo("250000.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("60000.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("190000.00");
+        var rejectedOrder = transferOrderMapper.selectList(null).stream()
+                .filter(order -> rejected.getTransactionNo().equals(order.getTransferNo()))
+                .findFirst().orElseThrow();
+        assertThat(rejectedOrder.getStatus()).isEqualTo("FAILED");
+        assertThat(rejectedOrder.getRiskDecision()).isEqualTo("REJECT");
+        assertThat(riskEventQueryService.findByBusinessNo(owner, rejected.getTransactionNo()))
+                .extracting(event -> event.ruleCode())
+                .containsExactly("DAILY_LIMIT");
+        assertThat(riskEventMapper.selectCount(null)).isEqualTo(2);
     }
 
     private static MySQLContainer mysqlContainer() {

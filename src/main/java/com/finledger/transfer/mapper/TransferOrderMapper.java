@@ -46,4 +46,17 @@ public interface TransferOrderMapper extends BaseMapper<TransferOrderEntity> {
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to
     );
+
+    @Update("""
+            UPDATE transfer_order
+            SET status = #{status}, risk_decision = #{riskDecision},
+                completed_at = #{completedAt}, updated_at = CURRENT_TIMESTAMP(3)
+            WHERE id = #{transferId} AND status = 'PROCESSING'
+            """)
+    int completeRiskAssessment(
+            @Param("transferId") Long transferId,
+            @Param("status") String status,
+            @Param("riskDecision") String riskDecision,
+            @Param("completedAt") LocalDateTime completedAt
+    );
 }
