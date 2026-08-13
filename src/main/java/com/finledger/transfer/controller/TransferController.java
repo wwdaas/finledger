@@ -4,6 +4,7 @@ import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.dto.TransferResponse;
 import com.finledger.settlement.dto.DeferredTransferResponse;
 import com.finledger.settlement.service.PendingTransferService;
+import com.finledger.settlement.service.DeferredTransferQueryService;
 import com.finledger.transfer.service.IdempotentTransferService;
 import com.finledger.security.CurrentUser;
 import jakarta.validation.Valid;
@@ -15,6 +16,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -28,13 +31,16 @@ public class TransferController {
 
     private final IdempotentTransferService transferService;
     private final PendingTransferService pendingTransferService;
+    private final DeferredTransferQueryService deferredTransferQueryService;
 
     public TransferController(
             IdempotentTransferService transferService,
-            PendingTransferService pendingTransferService
+            PendingTransferService pendingTransferService,
+            DeferredTransferQueryService deferredTransferQueryService
     ) {
         this.transferService = transferService;
         this.pendingTransferService = pendingTransferService;
+        this.deferredTransferQueryService = deferredTransferQueryService;
     }
 
     @PostMapping
@@ -57,5 +63,13 @@ public class TransferController {
             @Valid @RequestBody TransferRequest request
     ) {
         return pendingTransferService.createPending(CurrentUser.id(jwt), request);
+    }
+
+    @GetMapping("/{transferId}")
+    public DeferredTransferResponse getDeferredTransfer(
+            @AuthenticationPrincipal Jwt jwt,
+            @jakarta.validation.constraints.Positive @PathVariable Long transferId
+    ) {
+        return deferredTransferQueryService.getOwnedById(CurrentUser.id(jwt), transferId);
     }
 }
