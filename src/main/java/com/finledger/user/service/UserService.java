@@ -3,6 +3,7 @@ package com.finledger.user.service;
 import com.finledger.user.dto.RegisterUserRequest;
 import com.finledger.user.dto.UserResponse;
 import com.finledger.user.entity.UserEntity;
+import com.finledger.user.exception.UserDisabledException;
 import com.finledger.user.exception.UserNotFoundException;
 import com.finledger.user.exception.UsernameAlreadyExistsException;
 import com.finledger.user.mapper.UserMapper;
@@ -51,6 +52,14 @@ public class UserService {
             throw new UserNotFoundException(userId);
         }
         return toResponse(user);
+    }
+
+    public UserResponse requireActiveUser(Long userId) {
+        UserResponse user = getById(userId);
+        if (!ACTIVE_STATUS.equals(user.status())) {
+            throw new UserDisabledException(userId);
+        }
+        return user;
     }
 
     private UserResponse toResponse(UserEntity user) {
