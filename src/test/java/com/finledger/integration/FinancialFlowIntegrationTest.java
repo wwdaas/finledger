@@ -16,6 +16,8 @@ import com.finledger.settlement.exception.InsufficientAvailableBalanceException;
 import com.finledger.settlement.mapper.FundMovementRecordMapper;
 import com.finledger.settlement.service.PendingTransferService;
 import com.finledger.settlement.service.SettlementService;
+import com.finledger.settlement.service.CancellationService;
+import com.finledger.settlement.exception.InvalidTransactionStateException;
 import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.dto.TransferResponse;
 import com.finledger.transfer.exception.InsufficientBalanceException;
@@ -84,6 +86,7 @@ class FinancialFlowIntegrationTest {
     @Autowired private IdempotentTransferService transferService;
     @Autowired private PendingTransferService pendingTransferService;
     @Autowired private SettlementService settlementService;
+    @Autowired private CancellationService cancellationService;
     @Autowired private AiTransactionAssistantService aiAssistantService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private MockMvc mockMvc;
@@ -341,6 +344,34 @@ class FinancialFlowIntegrationTest {
                 .extracting(TransactionRecordEntity::getDirection)
                 .containsExactlyInAnyOrder("DEBIT", "CREDIT");
         assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(2);
+    }
+
+    @Test
+    void shouldCancelAndUnfreezeReservedFundsOnlyOnce() {
+        Long owner = createUser("cancel_owner");
+        Long receiver = createUser("cancel_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+
+        var cancelled = cancellationService.cancel(owner, pending.transferId());
+
+        assertThat(cancelled.status()).isEqualTo("CANCELLED");
+        assertThat(balance(from)).isEqualByComparingTo("1000.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("1000.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
+        assertThat(transactionRecordMapper.selectList(null).stream()
+                .filter(record -> "TRANSFER".equals(record.getBusinessType())))
+                .isEmpty();
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(2);
+
+        assertThatThrownBy(() -> cancellationService.cancel(owner, pending.transferId()))
+                .isInstanceOf(InvalidTransactionStateException.class);
+        assertThat(availableBalance(from)).isEqualByComparingTo("1000.00");
     }
 
     private static MySQLContainer mysqlContainer() {
