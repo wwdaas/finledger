@@ -948,6 +948,21 @@ textarea:focus {
     letter-spacing: -0.04em;
 }
 
+.balance-breakdown {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    gap: 16px;
+    margin-top: 9px;
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.balance-breakdown strong {
+    color: var(--ink);
+    font-weight: 750;
+}
+
 .account-card-footer {
     position: relative;
     z-index: 1;
@@ -1244,6 +1259,85 @@ tbody tr:last-child td {
     font-size: 9px;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.transfer-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 11px;
+}
+
+.lifecycle-card {
+    margin-top: 24px;
+    padding: 28px 31px;
+    border: 1px solid rgba(18, 59, 50, 0.12);
+    border-radius: var(--radius-lg);
+    background: var(--paper);
+}
+
+.lifecycle-heading,
+.lifecycle-metrics {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+.lifecycle-heading h3 {
+    margin: 3px 0 0;
+    font-family: Georgia, "Songti SC", serif;
+    font-size: 24px;
+    font-weight: 500;
+}
+
+.status-chip {
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: #dff3e9;
+    color: var(--success);
+    font-size: 9px;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+}
+
+.lifecycle-card > code {
+    display: block;
+    margin-top: 18px;
+    color: var(--forest);
+    font-size: 11px;
+}
+
+.lifecycle-metrics {
+    margin-top: 13px;
+    padding: 14px 0;
+    border-top: 1px solid #e4e9e5;
+    border-bottom: 1px solid #e4e9e5;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.lifecycle-metrics strong {
+    color: var(--ink);
+}
+
+.risk-event-list {
+    display: grid;
+    gap: 8px;
+    margin: 16px 0;
+    padding: 0;
+    list-style: none;
+}
+
+.risk-event-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.risk-event-list strong {
+    color: var(--ink);
 }
 
 .assurance-card {
@@ -1814,6 +1908,13 @@ tbody tr:last-child td {
     }
 
     .ai-form {
+        grid-template-columns: 1fr;
+    }
+
+    .transfer-actions,
+    .lifecycle-metrics,
+    .risk-event-list li {
+        display: grid;
         grid-template-columns: 1fr;
     }
 

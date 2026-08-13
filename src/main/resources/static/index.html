@@ -249,7 +249,7 @@
                 <div>
                     <p class="eyebrow">SECURE TRANSFER</p>
                     <h1>发起转账</h1>
-                    <p>一次提交完成扣款、入账、订单与双边流水。</p>
+                    <p>可以立即原子转账，也可以先冻结资金，再选择清算或撤销。</p>
                 </div>
             </div>
             <div class="form-layout">
@@ -274,7 +274,10 @@
                         <span>Idempotency-Key</span>
                         <code id="idempotency-key"></code>
                     </div>
-                    <button class="button button-primary button-block" type="submit">确认模拟转账</button>
+                    <div class="transfer-actions">
+                        <button class="button button-primary" type="submit">立即模拟转账</button>
+                        <button id="pending-transfer-button" class="button button-outline" type="button">创建待处理交易</button>
+                    </div>
                 </form>
 
                 <aside class="assurance-card">
@@ -288,6 +291,22 @@
                     <div class="assurance-footer">仅处理模拟资金 · 不连接真实支付渠道</div>
                 </aside>
             </div>
+            <article id="deferred-transfer-panel" class="lifecycle-card hidden">
+                <div class="lifecycle-heading">
+                    <div><p class="eyebrow">DEFERRED SETTLEMENT</p><h3>待处理交易状态</h3></div>
+                    <span id="deferred-transfer-status" class="status-chip">PENDING</span>
+                </div>
+                <code id="deferred-transfer-no"></code>
+                <div class="lifecycle-metrics">
+                    <span>风控结论 <strong id="deferred-transfer-risk"></strong></span>
+                    <span id="deferred-transfer-balances"></span>
+                </div>
+                <ul id="deferred-risk-events" class="risk-event-list"></ul>
+                <div class="transfer-actions">
+                    <button id="settle-transfer-button" class="button button-primary" type="button">执行清算</button>
+                    <button id="cancel-transfer-button" class="button button-outline" type="button">撤销并解冻</button>
+                </div>
+            </article>
         </section>
 
         <section id="view-transactions" class="page-view">
@@ -341,7 +360,7 @@
                     </div>
                     <form id="ai-form" class="ai-form">
                         <label class="sr-only" for="ai-question">交易分析问题</label>
-                        <textarea id="ai-question" maxlength="500" required placeholder="例如：我这个月转出去多少钱？"></textarea>
+                        <textarea id="ai-question" maxlength="500" required placeholder="例如：我这个月转出去多少钱？或：交易 TF… 为什么触发风控？"></textarea>
                         <button class="button button-primary" type="submit">分析交易 <span aria-hidden="true">✦</span></button>
                     </form>
                 </div>

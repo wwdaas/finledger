@@ -6,6 +6,7 @@
         user: null,
         accounts: [],
         recentTransactions: [],
+        activeDeferredTransfer: null,
         transactionPage: 1,
         transactionTotalPages: 1,
         idempotencyKey: createIdempotencyKey()
@@ -73,10 +74,14 @@
             ACCOUNT_ACCESS_DENIED: "你没有权限操作该账户",
             ACCOUNT_NOT_ACTIVE: "账户当前不可用",
             INSUFFICIENT_BALANCE: "付款账户余额不足",
+            INSUFFICIENT_AVAILABLE_BALANCE: "付款账户可用余额不足",
             SAME_ACCOUNT_TRANSFER: "付款账户与收款账户不能相同",
             INVALID_AMOUNT: "请输入合法的两位小数金额",
             IDEMPOTENCY_CONFLICT: "这个幂等键已用于另一笔转账",
             RATE_LIMIT_EXCEEDED: "操作过于频繁，请稍后再试",
+            INVALID_TRANSACTION_STATE: "当前交易状态不允许执行这个操作",
+            TRANSACTION_NOT_FOUND: "交易不存在或你无权查看",
+            RISK_REJECTED: fallback || "交易被风控规则拒绝",
             UNSUPPORTED_AI_QUERY: "助手仅支持只读交易分析问题",
             AI_PROVIDER_UNAVAILABLE: "AI 服务暂时不可用"
         };
@@ -241,6 +246,10 @@
                 </div>
                 <div class="account-number">${escapeHtml(formatAccountNumber(account.accountNo))}</div>
                 <div class="account-balance">${escapeHtml(formatMoney(account.balance))}</div>
+                <div class="balance-breakdown">
+                    <span>可用 <strong>${escapeHtml(formatMoney(account.availableBalance))}</strong></span>
+                    <span>冻结 <strong>${escapeHtml(formatMoney(account.frozenBalance))}</strong></span>
+                </div>
                 <div class="account-card-footer">
                     <span>${escapeHtml(account.currency)} · VERSION ${escapeHtml(account.version)}</span>
                     <button data-recharge-account="${escapeHtml(account.id)}" type="button">模拟充值 ＋</button>
@@ -254,7 +263,7 @@
 
     function renderAccountOptions() {
         const optionHtml = state.accounts.map(account =>
-            `<option value="${escapeHtml(account.id)}">账户 ${escapeHtml(account.id)} · ${escapeHtml(formatAccountNumber(account.accountNo))} · ${escapeHtml(formatMoney(account.balance))}</option>`
+            `<option value="${escapeHtml(account.id)}">账户 ${escapeHtml(account.id)} · ${escapeHtml(formatAccountNumber(account.accountNo))} · 可用 ${escapeHtml(formatMoney(account.availableBalance))}</option>`
         ).join("");
         document.querySelector("#transfer-from").innerHTML = optionHtml || '<option value="">请先创建账户</option>';
         document.querySelector("#recharge-account").innerHTML = optionHtml || '<option value="">请先创建账户</option>';
@@ -409,15 +418,104 @@
         }
     }
 
+    function transferPayload() {
+        return {
+            fromAccountId: Number(document.querySelector("#transfer-from").value),
+            toAccountId: Number(document.querySelector("#transfer-to").value),
+            amount: Number(document.querySelector("#transfer-amount").value)
+        };
+    }
+
+    async function handlePendingTransfer() {
+        const form = document.querySelector("#transfer-form");
+        const button = document.querySelector("#pending-transfer-button");
+        if (!form.reportValidity()) return;
+        button.disabled = true;
+        button.textContent = "冻结处理中…";
+        try {
+            const result = await request("/api/transfers/pending", {
+                method: "POST",
+                body: JSON.stringify(transferPayload())
+            });
+            state.activeDeferredTransfer = result;
+            const risks = await loadRiskEvents(result.transferNo);
+            renderDeferredTransfer(result, risks);
+            showToast(`待处理交易已创建，可用余额已冻结 ${formatMoney(result.amount)}`);
+            form.reset();
+            await refreshWorkspace();
+        } catch (error) {
+            showToast(error.message, "error");
+        } finally {
+            button.disabled = false;
+            button.textContent = "创建待处理交易";
+        }
+    }
+
+    async function loadRiskEvents(transferNo) {
+        const page = await request(`/api/risk-events?businessNo=${encodeURIComponent(transferNo)}&page=1&size=20`);
+        return page.items || [];
+    }
+
+    function renderDeferredTransfer(transaction, riskEvents = []) {
+        const panel = document.querySelector("#deferred-transfer-panel");
+        panel.classList.remove("hidden");
+        document.querySelector("#deferred-transfer-no").textContent = transaction.transferNo;
+        document.querySelector("#deferred-transfer-status").textContent = transaction.status;
+        document.querySelector("#deferred-transfer-risk").textContent = transaction.riskDecision;
+        document.querySelector("#deferred-transfer-balances").textContent =
+            `总额 ${formatMoney(transaction.totalBalance)} · 可用 ${formatMoney(transaction.availableBalance)} · 冻结 ${formatMoney(transaction.frozenBalance)}`;
+        document.querySelector("#deferred-risk-events").innerHTML = riskEvents.length
+            ? riskEvents.map(event => `<li><strong>${escapeHtml(event.ruleCode)}</strong><span>${escapeHtml(event.riskLevel)} / ${escapeHtml(event.decision)} · ${escapeHtml(event.reason)}</span></li>`).join("")
+            : "<li><span>没有触发需要记录的风控规则</span></li>";
+        const pending = transaction.status === "PENDING";
+        document.querySelector("#settle-transfer-button").disabled = !pending;
+        document.querySelector("#cancel-transfer-button").disabled = !pending;
+    }
+
+    async function changeDeferredTransferState(action) {
+        const transaction = state.activeDeferredTransfer;
+        if (!transaction) return;
+        const settle = action === "settlement";
+        const button = document.querySelector(settle ? "#settle-transfer-button" : "#cancel-transfer-button");
+        button.disabled = true;
+        try {
+            const result = await request(`/api/transfers/${transaction.transferId}/${action}`, {method: "POST"});
+            state.activeDeferredTransfer = result;
+            const risks = await loadRiskEvents(result.transferNo);
+            renderDeferredTransfer(result, risks);
+            await refreshWorkspace();
+            showToast(settle ? "交易已清算并完成双边记账" : "交易已撤销，冻结资金已经解冻");
+        } catch (error) {
+            showToast(error.message, "error");
+            button.disabled = false;
+        }
+    }
+
     async function handleAiQuestion(question, form) {
         const responseBox = document.querySelector("#ai-response");
         responseBox.innerHTML = '<span class="assistant-avatar">FL</span><div><strong>正在分析交易…</strong><p>Java 服务正在完成权限校验和受控数据查询。</p></div>';
         setSubmitting(form, true, "分析中…");
         try {
-            const result = await request("/api/ai/transactions/query", {
+            const explainsTransaction = /\bTF[A-F0-9]{24}\b/i.test(question);
+            const result = await request(explainsTransaction
+                ? "/api/ai/transactions/explain"
+                : "/api/ai/transactions/query", {
                 method: "POST",
                 body: JSON.stringify({question})
             });
+            if (explainsTransaction) {
+                const risks = (result.riskEvents || []).map(event => `
+                    <div class="ai-result-item"><span>${escapeHtml(event.ruleCode)} · ${escapeHtml(event.riskLevel)}</span><strong>${escapeHtml(event.decision)}</strong></div>`).join("");
+                responseBox.innerHTML = `
+                    <span class="assistant-avatar">FL</span>
+                    <div><strong>${escapeHtml(result.answer)}</strong>
+                    <p>${escapeHtml(result.transactionNo)} · ${escapeHtml(result.status)} / ${escapeHtml(result.riskDecision)}</p>
+                    <div class="ai-metrics">
+                        <div class="ai-metric"><span>可用余额</span><strong>${escapeHtml(formatMoney(result.availableBalance))}</strong></div>
+                        <div class="ai-metric"><span>冻结余额</span><strong>${escapeHtml(formatMoney(result.frozenBalance))}</strong></div>
+                    </div>${risks ? `<div class="ai-result-list">${risks}</div>` : ""}</div>`;
+                return;
+            }
             const rows = (result.transactions || []).map(item => `
                 <div class="ai-result-item"><span>${escapeHtml(formatDate(item.createdAt))} · 账户 #${escapeHtml(item.accountId)}</span><strong>${escapeHtml(formatMoney(item.amount))}</strong></div>`).join("");
             responseBox.innerHTML = `
@@ -535,6 +633,9 @@
 
         document.querySelector("#recharge-form").addEventListener("submit", handleRecharge);
         document.querySelector("#transfer-form").addEventListener("submit", handleTransfer);
+        document.querySelector("#pending-transfer-button").addEventListener("click", handlePendingTransfer);
+        document.querySelector("#settle-transfer-button").addEventListener("click", () => changeDeferredTransferState("settlement"));
+        document.querySelector("#cancel-transfer-button").addEventListener("click", () => changeDeferredTransferState("cancellation"));
         document.querySelector("#transaction-filter").addEventListener("submit", event => {
             event.preventDefault();
             loadTransactions(1).catch(error => showToast(error.message, "error"));
