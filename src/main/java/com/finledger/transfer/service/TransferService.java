@@ -71,22 +71,26 @@ public class TransferService {
             throw new InsufficientBalanceException(fromAccount.getId());
         }
 
-        BigDecimal fromBefore = fromAccount.getBalance();
-        BigDecimal toBefore = toAccount.getBalance();
-        BigDecimal fromAfter = MoneyAmounts.requireValidBalance(fromBefore.subtract(amount));
-        BigDecimal toAfter = MoneyAmounts.requireValidBalance(toBefore.add(amount));
-
-        updateBalance(fromAccount, fromAfter, fromAccount.getAvailableBalance().subtract(amount));
-        updateBalance(toAccount, toAfter, toAccount.getAvailableBalance().add(amount));
+        BigDecimal fromTotalBefore = fromAccount.getTotalBalance();
+        BigDecimal toTotalBefore = toAccount.getTotalBalance();
+        updateAvailableBalance(fromAccount, fromAccount.getAvailableBalance().subtract(amount));
+        updateAvailableBalance(toAccount, toAccount.getAvailableBalance().add(amount));
+        BigDecimal fromTotalAfter = fromAccount.getTotalBalance();
+        BigDecimal toTotalAfter = toAccount.getTotalBalance();
 
         LocalDateTime completedAt = LocalDateTime.now(ZoneOffset.UTC);
         TransferOrderEntity order = createOrder(userId, request, amount, fromAccount.getCurrency(), completedAt);
-        insertTransferRecord(order, fromAccount, toAccount.getId(), "DEBIT", fromBefore, fromAfter);
-        insertTransferRecord(order, toAccount, fromAccount.getId(), "CREDIT", toBefore, toAfter);
+        insertTransferRecord(
+                order, fromAccount, toAccount.getId(), "DEBIT", fromTotalBefore, fromTotalAfter
+        );
+        insertTransferRecord(
+                order, toAccount, fromAccount.getId(), "CREDIT", toTotalBefore, toTotalAfter
+        );
 
         return new TransferResponse(
                 order.getId(), order.getTransferNo(), fromAccount.getId(), toAccount.getId(),
-                amount, order.getCurrency(), order.getStatus(), fromAfter, toAfter, completedAt
+                amount, order.getCurrency(), order.getStatus(),
+                fromTotalAfter, toTotalAfter, completedAt
         );
     }
 
@@ -96,13 +100,12 @@ public class TransferService {
         }
     }
 
-    private void updateBalance(
+    private void updateAvailableBalance(
             AccountEntity account,
-            BigDecimal newBalance,
             BigDecimal newAvailableBalance
     ) {
-        account.setBalance(newBalance);
         account.setAvailableBalance(MoneyAmounts.requireValidBalance(newAvailableBalance));
+        MoneyAmounts.requireValidBalance(account.getTotalBalance());
         account.setVersion(account.getVersion() + 1);
         if (accountMapper.updateById(account) != 1) {
             throw new IllegalStateException("Expected one updated account row: " + account.getId());

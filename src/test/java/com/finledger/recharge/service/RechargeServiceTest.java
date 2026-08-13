@@ -43,9 +43,8 @@ class RechargeServiceTest {
         AccountEntity account = new AccountEntity();
         account.setId(10L);
         account.setUserId(1L);
-        account.setBalance(new BigDecimal("100.00"));
         account.setAvailableBalance(new BigDecimal("100.00"));
-        account.setFrozenBalance(new BigDecimal("0.00"));
+        account.setFrozenBalance(new BigDecimal("50.00"));
         account.setCurrency("CNY");
         account.setStatus("ACTIVE");
         account.setVersion(0L);
@@ -56,15 +55,17 @@ class RechargeServiceTest {
 
         RechargeResponse response = rechargeService.recharge(1L, 10L, new BigDecimal("25.00"));
 
-        assertThat(response.balance()).isEqualByComparingTo("125.00");
+        assertThat(response.availableBalance()).isEqualByComparingTo("125.00");
+        assertThat(response.frozenBalance()).isEqualByComparingTo("50.00");
+        assertThat(response.totalBalance()).isEqualByComparingTo("175.00");
         assertThat(account.getAvailableBalance()).isEqualByComparingTo("125.00");
-        assertThat(account.getFrozenBalance()).isEqualByComparingTo("0.00");
+        assertThat(account.getFrozenBalance()).isEqualByComparingTo("50.00");
         assertThat(account.getVersion()).isEqualTo(1L);
         ArgumentCaptor<TransactionRecordEntity> recordCaptor =
                 ArgumentCaptor.forClass(TransactionRecordEntity.class);
         verify(transactionRecordMapper).insert(recordCaptor.capture());
         assertThat(recordCaptor.getValue().getDirection()).isEqualTo("CREDIT");
-        assertThat(recordCaptor.getValue().getBalanceBefore()).isEqualByComparingTo("100.00");
-        assertThat(recordCaptor.getValue().getBalanceAfter()).isEqualByComparingTo("125.00");
+        assertThat(recordCaptor.getValue().getBalanceBefore()).isEqualByComparingTo("150.00");
+        assertThat(recordCaptor.getValue().getBalanceAfter()).isEqualByComparingTo("175.00");
     }
 }

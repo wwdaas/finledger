@@ -58,7 +58,7 @@ public class DeferredTransferQueryService {
         return new DeferredTransferResponse(
                 order.getId(), order.getTransferNo(), order.getFromAccountId(), order.getToAccountId(),
                 order.getAmount(), order.getCurrency(), order.getStatus(), order.getRiskDecision(),
-                source.getBalance(), source.getAvailableBalance(), source.getFrozenBalance(),
+                source.getTotalBalance(), source.getAvailableBalance(), source.getFrozenBalance(),
                 order.getCreatedAt(), order.getCompletedAt()
         );
     }

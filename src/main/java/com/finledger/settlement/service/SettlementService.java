@@ -70,32 +70,27 @@ public class SettlementService {
 
         BigDecimal sourceAvailableBefore = source.getAvailableBalance();
         BigDecimal sourceFrozenBefore = source.getFrozenBalance();
-        BigDecimal sourceTotalBefore = source.getBalance();
-        BigDecimal targetTotalBefore = target.getBalance();
+        BigDecimal sourceTotalBefore = source.getTotalBalance();
+        BigDecimal targetTotalBefore = target.getTotalBalance();
         BigDecimal targetAvailableBefore = target.getAvailableBalance();
 
         source.setFrozenBalance(MoneyAmounts.requireValidBalance(
                 sourceFrozenBefore.subtract(order.getAmount())
         ));
-        source.setBalance(MoneyAmounts.requireValidBalance(
-                sourceTotalBefore.subtract(order.getAmount())
-        ));
         source.setVersion(source.getVersion() + 1);
         target.setAvailableBalance(MoneyAmounts.requireValidBalance(
                 targetAvailableBefore.add(order.getAmount())
         ));
-        target.setBalance(MoneyAmounts.requireValidBalance(
-                targetTotalBefore.add(order.getAmount())
-        ));
+        MoneyAmounts.requireValidBalance(target.getTotalBalance());
         target.setVersion(target.getVersion() + 1);
         updateAccount(source);
         updateAccount(target);
 
         insertTransferRecord(
-                order, source, target.getId(), "DEBIT", sourceTotalBefore, source.getBalance()
+                order, source, target.getId(), "DEBIT", sourceTotalBefore, source.getTotalBalance()
         );
         insertTransferRecord(
-                order, target, source.getId(), "CREDIT", targetTotalBefore, target.getBalance()
+                order, target, source.getId(), "CREDIT", targetTotalBefore, target.getTotalBalance()
         );
         movementRecorder.record(
                 source, order.getId(), "SETTLEMENT", order.getAmount(),
@@ -170,7 +165,7 @@ public class SettlementService {
         return new DeferredTransferResponse(
                 order.getId(), order.getTransferNo(), order.getFromAccountId(), order.getToAccountId(),
                 order.getAmount(), order.getCurrency(), order.getStatus(), order.getRiskDecision(),
-                source.getBalance(), source.getAvailableBalance(), source.getFrozenBalance(),
+                source.getTotalBalance(), source.getAvailableBalance(), source.getFrozenBalance(),
                 order.getCreatedAt(), order.getCompletedAt()
         );
     }

@@ -145,15 +145,16 @@ sequenceDiagram
 
 一次成功转账产生：
 
-- 来源账户余额减少 `amount`；
-- 目标账户余额增加同一 `amount`；
+- 来源账户可用余额和总资金减少 `amount`，冻结余额不变；
+- 目标账户可用余额和总资金增加同一 `amount`，冻结余额不变；
 - 一条 `transfer_order`；
 - 来源账户一条 `DEBIT` 流水；
 - 目标账户一条 `CREDIT` 流水。
 
-流水保存 `balance_before` 和 `balance_after`。数据库检查约束要求借记满足
-`after = before - amount`，贷记满足 `after = before + amount`。当前余额负责快速读，流水负责
-解释“余额为什么是这个数”以及后续对账。
+流水保存 `balance_before` 和 `balance_after`，在现有充值和最终转账流水中统一表示账户
+`totalBalance` 快照。数据库检查约束要求借记满足 `after = before - amount`，贷记满足
+`after = before + amount`。当前双余额负责快速读，流水负责解释“总资金为什么是这个数”以及
+后续对账；冻结组成变化由 `fund_movement_record` 的 available/frozen/total 快照记录。
 
 ## 待处理交易与风控事务
 

@@ -220,7 +220,7 @@
     function renderWorkspace() {
         document.querySelector("#current-username").textContent = state.user?.username || "用户";
         document.querySelector("#account-count").textContent = String(state.accounts.length);
-        const total = state.accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0);
+        const total = state.accounts.reduce((sum, account) => sum + Number(account.totalBalance || 0), 0);
         document.querySelector("#total-balance").textContent = formatMoney(total);
 
         renderAccountGrid(document.querySelector("#overview-account-grid"), state.accounts.slice(0, 3), true);
@@ -245,7 +245,7 @@
                     <span class="account-id">ID ${escapeHtml(account.id)}</span>
                 </div>
                 <div class="account-number">${escapeHtml(formatAccountNumber(account.accountNo))}</div>
-                <div class="account-balance">${escapeHtml(formatMoney(account.balance))}</div>
+                <div class="account-balance">${escapeHtml(formatMoney(account.totalBalance))}</div>
                 <div class="balance-breakdown">
                     <span>可用 <strong>${escapeHtml(formatMoney(account.availableBalance))}</strong></span>
                     <span>冻结 <strong>${escapeHtml(formatMoney(account.frozenBalance))}</strong></span>
@@ -376,7 +376,7 @@
                 method: "POST",
                 body: JSON.stringify({amount: Number(amount)})
             });
-            showToast(`充值成功，当前余额 ${formatMoney(result.balance)}`);
+            showToast(`充值成功，当前可用余额 ${formatMoney(result.availableBalance)}`);
             form.reset();
             closeRechargeModal();
             await refreshWorkspace();

@@ -26,11 +26,11 @@ pair of account rows.
 | Main cost | Lock waits and possible deadlocks | Retry logic and possible retry storms |
 | FinLedger use | Primary transfer path | Retained as a learning alternative |
 
-The optimistic-lock SQL is implemented in `AccountMapper.updateBalanceWithVersion`:
+The optimistic-lock SQL is implemented in `AccountMapper.updateAvailableBalanceWithVersion`:
 
 ```sql
 UPDATE account
-SET balance = ?, version = version + 1
+SET available_balance = ?, version = version + 1
 WHERE id = ? AND version = ?;
 ```
 

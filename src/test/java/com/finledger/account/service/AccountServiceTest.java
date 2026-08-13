@@ -57,7 +57,7 @@ class AccountServiceTest {
         AccountResponse response = accountService.create(1L);
 
         assertThat(response.id()).isEqualTo(10L);
-        assertThat(response.balance()).isEqualByComparingTo("0.00");
+        assertThat(response.totalBalance()).isEqualByComparingTo("0.00");
         assertThat(response.availableBalance()).isEqualByComparingTo("0.00");
         assertThat(response.frozenBalance()).isEqualByComparingTo("0.00");
         assertThat(response.currency()).isEqualTo("CNY");
@@ -93,7 +93,6 @@ class AccountServiceTest {
         account.setId(id);
         account.setUserId(userId);
         account.setAccountNo("FLACCOUNT001");
-        account.setBalance(new BigDecimal("0.00"));
         account.setAvailableBalance(new BigDecimal("0.00"));
         account.setFrozenBalance(new BigDecimal("0.00"));
         account.setCurrency("CNY");

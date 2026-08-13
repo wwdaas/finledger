@@ -48,7 +48,7 @@ class AccountControllerTest {
         mockMvc.perform(post("/api/accounts").with(jwt().jwt(token -> token.subject("1"))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(10))
-                .andExpect(jsonPath("$.balance").value(0.00))
+                .andExpect(jsonPath("$.totalBalance").value(0.00))
                 .andExpect(jsonPath("$.availableBalance").value(0.00))
                 .andExpect(jsonPath("$.frozenBalance").value(0.00))
                 .andExpect(jsonPath("$.currency").value("CNY"));

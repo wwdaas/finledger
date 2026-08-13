@@ -44,7 +44,7 @@ public class FundMovementRecorder {
         record.setFrozenBefore(frozenBefore);
         record.setFrozenAfter(account.getFrozenBalance());
         record.setTotalBefore(totalBefore);
-        record.setTotalAfter(account.getBalance());
+        record.setTotalAfter(account.getTotalBalance());
         if (movementMapper.insert(record) != 1) {
             throw new IllegalStateException("Expected one inserted fund movement record");
         }

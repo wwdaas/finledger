@@ -54,7 +54,7 @@ public class CancellationService {
 
         BigDecimal availableBefore = source.getAvailableBalance();
         BigDecimal frozenBefore = source.getFrozenBalance();
-        BigDecimal totalBefore = source.getBalance();
+        BigDecimal totalBefore = source.getTotalBalance();
         source.setAvailableBalance(MoneyAmounts.requireValidBalance(
                 availableBefore.add(order.getAmount())
         ));
@@ -85,7 +85,7 @@ public class CancellationService {
         return new DeferredTransferResponse(
                 order.getId(), order.getTransferNo(), order.getFromAccountId(), order.getToAccountId(),
                 order.getAmount(), order.getCurrency(), order.getStatus(), order.getRiskDecision(),
-                source.getBalance(), source.getAvailableBalance(), source.getFrozenBalance(),
+                source.getTotalBalance(), source.getAvailableBalance(), source.getFrozenBalance(),
                 order.getCreatedAt(), order.getCompletedAt()
         );
     }

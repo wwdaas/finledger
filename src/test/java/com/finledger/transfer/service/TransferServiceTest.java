@@ -69,8 +69,10 @@ class TransferServiceTest {
                 10L, new TransferRequest(1L, 2L, new BigDecimal("80.00"))
         );
 
-        assertThat(response.fromBalance()).isEqualByComparingTo("20.00");
-        assertThat(response.toBalance()).isEqualByComparingTo("100.00");
+        assertThat(response.fromTotalBalance()).isEqualByComparingTo("20.00");
+        assertThat(response.toTotalBalance()).isEqualByComparingTo("100.00");
+        assertThat(from.getAvailableBalance()).isEqualByComparingTo("20.00");
+        assertThat(to.getAvailableBalance()).isEqualByComparingTo("100.00");
         ArgumentCaptor<TransactionRecordEntity> records =
                 ArgumentCaptor.forClass(TransactionRecordEntity.class);
         verify(transactionRecordMapper, org.mockito.Mockito.times(2)).insert(records.capture());
@@ -95,7 +97,6 @@ class TransferServiceTest {
         AccountEntity account = new AccountEntity();
         account.setId(id);
         account.setUserId(userId);
-        account.setBalance(new BigDecimal(balance));
         account.setAvailableBalance(new BigDecimal(balance));
         account.setFrozenBalance(new BigDecimal("0.00"));
         account.setCurrency("CNY");

@@ -7,6 +7,8 @@ public record RechargeResponse(
         String recordNo,
         Long accountId,
         BigDecimal amount,
-        BigDecimal balance
+        BigDecimal availableBalance,
+        BigDecimal frozenBalance,
+        BigDecimal totalBalance
 ) {
 }
