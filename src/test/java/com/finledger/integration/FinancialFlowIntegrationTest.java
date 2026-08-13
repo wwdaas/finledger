@@ -15,6 +15,7 @@ import com.finledger.recharge.service.RechargeService;
 import com.finledger.settlement.exception.InsufficientAvailableBalanceException;
 import com.finledger.settlement.mapper.FundMovementRecordMapper;
 import com.finledger.settlement.service.PendingTransferService;
+import com.finledger.settlement.service.SettlementService;
 import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.dto.TransferResponse;
 import com.finledger.transfer.exception.InsufficientBalanceException;
@@ -82,6 +83,7 @@ class FinancialFlowIntegrationTest {
     @Autowired private RechargeService rechargeService;
     @Autowired private IdempotentTransferService transferService;
     @Autowired private PendingTransferService pendingTransferService;
+    @Autowired private SettlementService settlementService;
     @Autowired private AiTransactionAssistantService aiAssistantService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private MockMvc mockMvc;
@@ -313,6 +315,32 @@ class FinancialFlowIntegrationTest {
         assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
         assertThat(transferOrderMapper.selectCount(null)).isZero();
         assertThat(fundMovementRecordMapper.selectCount(null)).isZero();
+    }
+
+    @Test
+    void shouldSettleReservedFundsAndCreditDestination() {
+        Long owner = createUser("settle_owner");
+        Long receiver = createUser("settle_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+
+        var settled = settlementService.settle(owner, pending.transferId());
+
+        assertThat(settled.status()).isEqualTo("SETTLED");
+        assertThat(balance(from)).isEqualByComparingTo("700.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
+        assertThat(balance(to)).isEqualByComparingTo("300.00");
+        assertThat(availableBalance(to)).isEqualByComparingTo("300.00");
+        assertThat(transactionRecordMapper.selectList(null).stream()
+                .filter(record -> "TRANSFER".equals(record.getBusinessType())))
+                .extracting(TransactionRecordEntity::getDirection)
+                .containsExactlyInAnyOrder("DEBIT", "CREDIT");
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(2);
     }
 
     private static MySQLContainer mysqlContainer() {

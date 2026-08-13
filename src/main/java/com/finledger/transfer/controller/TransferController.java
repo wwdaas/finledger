@@ -5,6 +5,7 @@ import com.finledger.transfer.dto.TransferResponse;
 import com.finledger.settlement.dto.DeferredTransferResponse;
 import com.finledger.settlement.service.PendingTransferService;
 import com.finledger.settlement.service.DeferredTransferQueryService;
+import com.finledger.settlement.service.SettlementService;
 import com.finledger.transfer.service.IdempotentTransferService;
 import com.finledger.security.CurrentUser;
 import jakarta.validation.Valid;
@@ -32,15 +33,18 @@ public class TransferController {
     private final IdempotentTransferService transferService;
     private final PendingTransferService pendingTransferService;
     private final DeferredTransferQueryService deferredTransferQueryService;
+    private final SettlementService settlementService;
 
     public TransferController(
             IdempotentTransferService transferService,
             PendingTransferService pendingTransferService,
-            DeferredTransferQueryService deferredTransferQueryService
+            DeferredTransferQueryService deferredTransferQueryService,
+            SettlementService settlementService
     ) {
         this.transferService = transferService;
         this.pendingTransferService = pendingTransferService;
         this.deferredTransferQueryService = deferredTransferQueryService;
+        this.settlementService = settlementService;
     }
 
     @PostMapping
@@ -71,5 +75,13 @@ public class TransferController {
             @jakarta.validation.constraints.Positive @PathVariable Long transferId
     ) {
         return deferredTransferQueryService.getOwnedById(CurrentUser.id(jwt), transferId);
+    }
+
+    @PostMapping("/{transferId}/settlement")
+    public DeferredTransferResponse settle(
+            @AuthenticationPrincipal Jwt jwt,
+            @jakarta.validation.constraints.Positive @PathVariable Long transferId
+    ) {
+        return settlementService.settle(CurrentUser.id(jwt), transferId);
     }
 }
