@@ -67,7 +67,7 @@ public class TransferService {
         if (!fromAccount.getCurrency().equals(toAccount.getCurrency())) {
             throw new CurrencyMismatchException();
         }
-        if (fromAccount.getBalance().compareTo(amount) < 0) {
+        if (fromAccount.getAvailableBalance().compareTo(amount) < 0) {
             throw new InsufficientBalanceException(fromAccount.getId());
         }
 
@@ -76,8 +76,8 @@ public class TransferService {
         BigDecimal fromAfter = MoneyAmounts.requireValidBalance(fromBefore.subtract(amount));
         BigDecimal toAfter = MoneyAmounts.requireValidBalance(toBefore.add(amount));
 
-        updateBalance(fromAccount, fromAfter);
-        updateBalance(toAccount, toAfter);
+        updateBalance(fromAccount, fromAfter, fromAccount.getAvailableBalance().subtract(amount));
+        updateBalance(toAccount, toAfter, toAccount.getAvailableBalance().add(amount));
 
         LocalDateTime completedAt = LocalDateTime.now(ZoneOffset.UTC);
         TransferOrderEntity order = createOrder(userId, request, amount, fromAccount.getCurrency(), completedAt);
@@ -96,8 +96,13 @@ public class TransferService {
         }
     }
 
-    private void updateBalance(AccountEntity account, BigDecimal newBalance) {
+    private void updateBalance(
+            AccountEntity account,
+            BigDecimal newBalance,
+            BigDecimal newAvailableBalance
+    ) {
         account.setBalance(newBalance);
+        account.setAvailableBalance(MoneyAmounts.requireValidBalance(newAvailableBalance));
         account.setVersion(account.getVersion() + 1);
         if (accountMapper.updateById(account) != 1) {
             throw new IllegalStateException("Expected one updated account row: " + account.getId());

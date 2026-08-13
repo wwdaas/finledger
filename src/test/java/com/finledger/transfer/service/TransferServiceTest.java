@@ -96,6 +96,8 @@ class TransferServiceTest {
         account.setId(id);
         account.setUserId(userId);
         account.setBalance(new BigDecimal(balance));
+        account.setAvailableBalance(new BigDecimal(balance));
+        account.setFrozenBalance(new BigDecimal("0.00"));
         account.setCurrency("CNY");
         account.setStatus("ACTIVE");
         account.setVersion(0L);

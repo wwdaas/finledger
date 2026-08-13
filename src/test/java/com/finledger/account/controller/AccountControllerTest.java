@@ -37,6 +37,8 @@ class AccountControllerTest {
                 10L,
                 "FLACCOUNT001",
                 new BigDecimal("0.00"),
+                new BigDecimal("0.00"),
+                new BigDecimal("0.00"),
                 "CNY",
                 "ACTIVE",
                 0L,
@@ -47,6 +49,8 @@ class AccountControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(10))
                 .andExpect(jsonPath("$.balance").value(0.00))
+                .andExpect(jsonPath("$.availableBalance").value(0.00))
+                .andExpect(jsonPath("$.frozenBalance").value(0.00))
                 .andExpect(jsonPath("$.currency").value("CNY"));
     }
 }

@@ -46,6 +46,9 @@ public class RechargeService {
         BigDecimal balanceBefore = account.getBalance();
         BigDecimal balanceAfter = MoneyAmounts.requireValidBalance(balanceBefore.add(amount));
         account.setBalance(balanceAfter);
+        account.setAvailableBalance(MoneyAmounts.requireValidBalance(
+                account.getAvailableBalance().add(amount)
+        ));
         account.setVersion(account.getVersion() + 1);
         if (accountMapper.updateById(account) != 1) {
             throw new IllegalStateException("Expected one updated account row");

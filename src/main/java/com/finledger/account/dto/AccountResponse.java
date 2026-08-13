@@ -7,6 +7,8 @@ public record AccountResponse(
         Long id,
         String accountNo,
         BigDecimal balance,
+        BigDecimal availableBalance,
+        BigDecimal frozenBalance,
         String currency,
         String status,
         Long version,

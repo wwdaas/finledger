@@ -19,6 +19,10 @@ public class AccountEntity {
 
     private BigDecimal balance;
 
+    private BigDecimal availableBalance;
+
+    private BigDecimal frozenBalance;
+
     private String currency;
 
     private String status;
@@ -59,6 +63,22 @@ public class AccountEntity {
 
     public void setBalance(BigDecimal balance) {
         this.balance = balance;
+    }
+
+    public BigDecimal getAvailableBalance() {
+        return availableBalance;
+    }
+
+    public void setAvailableBalance(BigDecimal availableBalance) {
+        this.availableBalance = availableBalance;
+    }
+
+    public BigDecimal getFrozenBalance() {
+        return frozenBalance;
+    }
+
+    public void setFrozenBalance(BigDecimal frozenBalance) {
+        this.frozenBalance = frozenBalance;
     }
 
     public String getCurrency() {

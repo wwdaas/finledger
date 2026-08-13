@@ -43,6 +43,8 @@ public class AccountService {
             account.setUserId(userId);
             account.setAccountNo(accountNumberGenerator.nextAccountNo());
             account.setBalance(BigDecimal.ZERO.setScale(2));
+            account.setAvailableBalance(BigDecimal.ZERO.setScale(2));
+            account.setFrozenBalance(BigDecimal.ZERO.setScale(2));
             account.setCurrency(CNY);
             account.setStatus(ACTIVE_STATUS);
             account.setVersion(0L);
@@ -134,6 +136,8 @@ public class AccountService {
                 account.getId(),
                 account.getAccountNo(),
                 account.getBalance(),
+                account.getAvailableBalance(),
+                account.getFrozenBalance(),
                 account.getCurrency(),
                 account.getStatus(),
                 account.getVersion(),

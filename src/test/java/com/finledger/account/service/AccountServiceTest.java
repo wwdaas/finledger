@@ -58,6 +58,8 @@ class AccountServiceTest {
 
         assertThat(response.id()).isEqualTo(10L);
         assertThat(response.balance()).isEqualByComparingTo("0.00");
+        assertThat(response.availableBalance()).isEqualByComparingTo("0.00");
+        assertThat(response.frozenBalance()).isEqualByComparingTo("0.00");
         assertThat(response.currency()).isEqualTo("CNY");
         assertThat(response.status()).isEqualTo("ACTIVE");
     }
@@ -92,6 +94,8 @@ class AccountServiceTest {
         account.setUserId(userId);
         account.setAccountNo("FLACCOUNT001");
         account.setBalance(new BigDecimal("0.00"));
+        account.setAvailableBalance(new BigDecimal("0.00"));
+        account.setFrozenBalance(new BigDecimal("0.00"));
         account.setCurrency("CNY");
         account.setStatus("ACTIVE");
         account.setVersion(0L);

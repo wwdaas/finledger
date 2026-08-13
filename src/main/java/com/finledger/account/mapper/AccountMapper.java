@@ -11,7 +11,8 @@ import org.apache.ibatis.annotations.Update;
 public interface AccountMapper extends BaseMapper<AccountEntity> {
 
     @Select("""
-            SELECT id, user_id, account_no, balance, currency, status, version,
+            SELECT id, user_id, account_no, balance, available_balance, frozen_balance,
+                   currency, status, version,
                    created_at, updated_at
             FROM account
             WHERE id = #{accountId}
@@ -21,7 +22,8 @@ public interface AccountMapper extends BaseMapper<AccountEntity> {
 
     @Update("""
             UPDATE account
-            SET balance = #{newBalance}, version = version + 1,
+            SET balance = #{newBalance}, available_balance = #{newBalance},
+                version = version + 1,
                 updated_at = CURRENT_TIMESTAMP(3)
             WHERE id = #{accountId} AND version = #{expectedVersion}
             """)

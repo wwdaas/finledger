@@ -275,7 +275,10 @@ class FinancialFlowIntegrationTest {
         container.withDatabaseName("finledger_test");
         container.withUsername("finledger_test");
         container.withPassword("finledger_test_password");
-        container.withInitScript("database/schema/V1__create_core_tables.sql");
+        container.withInitScripts(
+                "database/schema/V1__create_core_tables.sql",
+                "database/schema/V2__add_settlement_and_risk.sql"
+        );
         container.withCommand("--log-bin-trust-function-creators=1");
         container.withStartupTimeout(Duration.ofMinutes(2));
         return container;
