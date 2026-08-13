@@ -374,6 +374,62 @@ class FinancialFlowIntegrationTest {
         assertThat(availableBalance(from)).isEqualByComparingTo("1000.00");
     }
 
+    @Test
+    void shouldRejectRepeatedSettlementWithoutDoubleDebit() {
+        Long owner = createUser("repeat_settle_owner");
+        Long receiver = createUser("repeat_settle_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+        settlementService.settle(owner, pending.transferId());
+
+        assertThatThrownBy(() -> settlementService.settle(owner, pending.transferId()))
+                .isInstanceOf(InvalidTransactionStateException.class);
+
+        assertThat(balance(from)).isEqualByComparingTo("700.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
+        assertThat(balance(to)).isEqualByComparingTo("300.00");
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(2);
+    }
+
+    @Test
+    void shouldAllowOnlyOneOfConcurrentSettlementAndCancellation() throws Exception {
+        Long owner = createUser("state_race_owner");
+        Long receiver = createUser("state_race_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+
+        List<LifecycleAttempt> attempts = runConcurrently(
+                () -> lifecycleAttempt(() -> settlementService.settle(owner, pending.transferId())),
+                () -> lifecycleAttempt(() -> cancellationService.cancel(owner, pending.transferId()))
+        );
+
+        assertThat(attempts).filteredOn(LifecycleAttempt::successful).hasSize(1);
+        assertThat(attempts).filteredOn(attempt -> !attempt.successful())
+                .extracting(LifecycleAttempt::failure)
+                .allMatch(InvalidTransactionStateException.class::isInstance);
+        String finalStatus = transferOrderMapper.selectById(pending.transferId()).getStatus();
+        assertThat(finalStatus).isIn("SETTLED", "CANCELLED");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
+        assertThat(balance(from).add(balance(to))).isEqualByComparingTo("1000.00");
+        if ("SETTLED".equals(finalStatus)) {
+            assertThat(balance(from)).isEqualByComparingTo("700.00");
+            assertThat(balance(to)).isEqualByComparingTo("300.00");
+        } else {
+            assertThat(balance(from)).isEqualByComparingTo("1000.00");
+            assertThat(balance(to)).isEqualByComparingTo("0.00");
+        }
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(2);
+    }
+
     private static MySQLContainer mysqlContainer() {
         MySQLContainer container = new MySQLContainer("mysql:8.4.11");
         container.withDatabaseName("finledger_test");
@@ -435,16 +491,25 @@ class FinancialFlowIntegrationTest {
         }
     }
 
-    private List<Attempt> runConcurrently(
-            Callable<Attempt> first,
-            Callable<Attempt> second
+    private LifecycleAttempt lifecycleAttempt(Runnable action) {
+        try {
+            action.run();
+            return new LifecycleAttempt(true, null);
+        } catch (RuntimeException exception) {
+            return new LifecycleAttempt(false, exception);
+        }
+    }
+
+    private <T> List<T> runConcurrently(
+            Callable<T> first,
+            Callable<T> second
     ) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
         try {
-            Future<Attempt> firstFuture = executor.submit(awaitStart(first, ready, start));
-            Future<Attempt> secondFuture = executor.submit(awaitStart(second, ready, start));
+            Future<T> firstFuture = executor.submit(awaitStart(first, ready, start));
+            Future<T> secondFuture = executor.submit(awaitStart(second, ready, start));
             assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
             start.countDown();
             return List.of(
@@ -457,8 +522,8 @@ class FinancialFlowIntegrationTest {
         }
     }
 
-    private Callable<Attempt> awaitStart(
-            Callable<Attempt> task,
+    private <T> Callable<T> awaitStart(
+            Callable<T> task,
             CountDownLatch ready,
             CountDownLatch start
     ) {
@@ -492,5 +557,8 @@ class FinancialFlowIntegrationTest {
         boolean successful() {
             return response != null;
         }
+    }
+
+    private record LifecycleAttempt(boolean successful, RuntimeException failure) {
     }
 }
