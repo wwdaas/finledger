@@ -2,6 +2,8 @@ package com.finledger.transfer.controller;
 
 import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.dto.TransferResponse;
+import com.finledger.settlement.dto.DeferredTransferResponse;
+import com.finledger.settlement.service.PendingTransferService;
 import com.finledger.transfer.service.IdempotentTransferService;
 import com.finledger.security.CurrentUser;
 import jakarta.validation.Valid;
@@ -25,9 +27,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class TransferController {
 
     private final IdempotentTransferService transferService;
+    private final PendingTransferService pendingTransferService;
 
-    public TransferController(IdempotentTransferService transferService) {
+    public TransferController(
+            IdempotentTransferService transferService,
+            PendingTransferService pendingTransferService
+    ) {
         this.transferService = transferService;
+        this.pendingTransferService = pendingTransferService;
     }
 
     @PostMapping
@@ -41,5 +48,14 @@ public class TransferController {
             @Valid @RequestBody TransferRequest request
     ) {
         return transferService.transfer(CurrentUser.id(jwt), idempotencyKey, request);
+    }
+
+    @PostMapping("/pending")
+    @ResponseStatus(HttpStatus.CREATED)
+    public DeferredTransferResponse createPending(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody TransferRequest request
+    ) {
+        return pendingTransferService.createPending(CurrentUser.id(jwt), request);
     }
 }

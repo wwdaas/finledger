@@ -12,6 +12,9 @@ import com.finledger.idempotency.mapper.IdempotencyRecordMapper;
 import com.finledger.ledger.entity.TransactionRecordEntity;
 import com.finledger.ledger.mapper.TransactionRecordMapper;
 import com.finledger.recharge.service.RechargeService;
+import com.finledger.settlement.exception.InsufficientAvailableBalanceException;
+import com.finledger.settlement.mapper.FundMovementRecordMapper;
+import com.finledger.settlement.service.PendingTransferService;
 import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.dto.TransferResponse;
 import com.finledger.transfer.exception.InsufficientBalanceException;
@@ -73,10 +76,12 @@ class FinancialFlowIntegrationTest {
     @Autowired private AccountMapper accountMapper;
     @Autowired private TransferOrderMapper transferOrderMapper;
     @Autowired private TransactionRecordMapper transactionRecordMapper;
+    @Autowired private FundMovementRecordMapper fundMovementRecordMapper;
     @Autowired private IdempotencyRecordMapper idempotencyRecordMapper;
     @Autowired private AccountService accountService;
     @Autowired private RechargeService rechargeService;
     @Autowired private IdempotentTransferService transferService;
+    @Autowired private PendingTransferService pendingTransferService;
     @Autowired private AiTransactionAssistantService aiAssistantService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private MockMvc mockMvc;
@@ -84,6 +89,8 @@ class FinancialFlowIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         dropFailureTrigger();
+        jdbcTemplate.update("DELETE FROM risk_event");
+        jdbcTemplate.update("DELETE FROM fund_movement_record");
         jdbcTemplate.update("DELETE FROM transaction_record");
         jdbcTemplate.update("DELETE FROM idempotency_record");
         jdbcTemplate.update("DELETE FROM transfer_order");
@@ -270,6 +277,44 @@ class FinancialFlowIntegrationTest {
         assertThat(receiverResult.transactionCount()).isZero();
     }
 
+    @Test
+    void shouldFreezeAvailableFundsAtomically() {
+        Long owner = createUser("freeze_owner");
+        Long receiver = createUser("freeze_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+
+        var response = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+
+        assertThat(response.status()).isEqualTo("PENDING");
+        assertThat(balance(from)).isEqualByComparingTo("1000.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("300.00");
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(1);
+    }
+
+    @Test
+    void shouldRollBackInsufficientAvailableBalanceFreeze() {
+        Long owner = createUser("freeze_poor_owner");
+        Long receiver = createUser("freeze_poor_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("100.00"));
+
+        assertThatThrownBy(() -> pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        )).isInstanceOf(InsufficientAvailableBalanceException.class);
+
+        assertThat(balance(from)).isEqualByComparingTo("100.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("100.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
+        assertThat(transferOrderMapper.selectCount(null)).isZero();
+        assertThat(fundMovementRecordMapper.selectCount(null)).isZero();
+    }
+
     private static MySQLContainer mysqlContainer() {
         MySQLContainer container = new MySQLContainer("mysql:8.4.11");
         container.withDatabaseName("finledger_test");
@@ -300,6 +345,14 @@ class FinancialFlowIntegrationTest {
 
     private BigDecimal balance(Long accountId) {
         return accountMapper.selectById(accountId).getBalance();
+    }
+
+    private BigDecimal availableBalance(Long accountId) {
+        return accountMapper.selectById(accountId).getAvailableBalance();
+    }
+
+    private BigDecimal frozenBalance(Long accountId) {
+        return accountMapper.selectById(accountId).getFrozenBalance();
     }
 
     private BigDecimal money(String value) {

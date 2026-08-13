@@ -13,12 +13,14 @@ public class TransferOrderEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String transferNo;
+    private String orderType;
     private Long initiatorUserId;
     private Long fromAccountId;
     private Long toAccountId;
     private BigDecimal amount;
     private String currency;
     private String status;
+    private String riskDecision;
     private String remark;
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
@@ -28,6 +30,8 @@ public class TransferOrderEntity {
     public void setId(Long id) { this.id = id; }
     public String getTransferNo() { return transferNo; }
     public void setTransferNo(String transferNo) { this.transferNo = transferNo; }
+    public String getOrderType() { return orderType; }
+    public void setOrderType(String orderType) { this.orderType = orderType; }
     public Long getInitiatorUserId() { return initiatorUserId; }
     public void setInitiatorUserId(Long initiatorUserId) { this.initiatorUserId = initiatorUserId; }
     public Long getFromAccountId() { return fromAccountId; }
@@ -40,6 +44,8 @@ public class TransferOrderEntity {
     public void setCurrency(String currency) { this.currency = currency; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getRiskDecision() { return riskDecision; }
+    public void setRiskDecision(String riskDecision) { this.riskDecision = riskDecision; }
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
     public LocalDateTime getCreatedAt() { return createdAt; }

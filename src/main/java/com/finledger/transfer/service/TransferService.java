@@ -118,12 +118,14 @@ public class TransferService {
     ) {
         TransferOrderEntity order = new TransferOrderEntity();
         order.setTransferNo(transferNumberGenerator.nextTransferNo());
+        order.setOrderType("IMMEDIATE");
         order.setInitiatorUserId(userId);
         order.setFromAccountId(request.fromAccountId());
         order.setToAccountId(request.toAccountId());
         order.setAmount(amount);
         order.setCurrency(currency);
         order.setStatus("SUCCESS");
+        order.setRiskDecision("PASS");
         order.setCompletedAt(completedAt);
         if (transferOrderMapper.insert(order) != 1) {
             throw new IllegalStateException("Expected one inserted transfer order");
