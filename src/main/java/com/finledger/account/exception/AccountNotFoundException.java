@@ -1,12 +1,11 @@
 package com.finledger.account.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.NOT_FOUND)
-public class AccountNotFoundException extends RuntimeException {
+public class AccountNotFoundException extends BusinessException {
 
     public AccountNotFoundException(Long accountId) {
-        super("Account not found: " + accountId);
+        super(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", "Account not found: " + accountId);
     }
 }

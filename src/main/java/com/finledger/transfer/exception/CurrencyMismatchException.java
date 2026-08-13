@@ -1,12 +1,11 @@
 package com.finledger.transfer.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.CONFLICT)
-public class CurrencyMismatchException extends RuntimeException {
+public class CurrencyMismatchException extends BusinessException {
 
     public CurrencyMismatchException() {
-        super("Source and destination account currencies must match");
+        super(HttpStatus.CONFLICT, "CURRENCY_MISMATCH", "Source and destination account currencies must match");
     }
 }

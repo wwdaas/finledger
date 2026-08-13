@@ -1,12 +1,11 @@
 package com.finledger.auth.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.UNAUTHORIZED)
-public class InvalidCredentialsException extends RuntimeException {
+public class InvalidCredentialsException extends BusinessException {
 
     public InvalidCredentialsException() {
-        super("Invalid username or password");
+        super(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "Invalid username or password");
     }
 }

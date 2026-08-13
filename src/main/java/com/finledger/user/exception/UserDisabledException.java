@@ -1,12 +1,11 @@
 package com.finledger.user.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.FORBIDDEN)
-public class UserDisabledException extends RuntimeException {
+public class UserDisabledException extends BusinessException {
 
     public UserDisabledException(Long userId) {
-        super("User is disabled: " + userId);
+        super(HttpStatus.FORBIDDEN, "USER_DISABLED", "User is disabled: " + userId);
     }
 }

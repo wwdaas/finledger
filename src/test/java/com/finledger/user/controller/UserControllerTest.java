@@ -67,7 +67,9 @@ class UserControllerTest {
                                   "password": "short"
                                 }
                                 """))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors").isArray());
 
         verifyNoInteractions(userService);
     }
@@ -85,6 +87,8 @@ class UserControllerTest {
                                   "password": "Password123!"
                                 }
                                 """))
-                .andExpect(status().isConflict());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("USERNAME_ALREADY_EXISTS"))
+                .andExpect(jsonPath("$.path").value("/api/users"));
     }
 }

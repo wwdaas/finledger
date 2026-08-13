@@ -1,12 +1,11 @@
 package com.finledger.user.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.NOT_FOUND)
-public class UserNotFoundException extends RuntimeException {
+public class UserNotFoundException extends BusinessException {
 
     public UserNotFoundException(Long userId) {
-        super("User not found: " + userId);
+        super(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found: " + userId);
     }
 }

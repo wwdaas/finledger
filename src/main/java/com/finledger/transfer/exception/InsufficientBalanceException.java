@@ -1,12 +1,11 @@
 package com.finledger.transfer.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.CONFLICT)
-public class InsufficientBalanceException extends RuntimeException {
+public class InsufficientBalanceException extends BusinessException {
 
     public InsufficientBalanceException(Long accountId) {
-        super("Insufficient balance in account: " + accountId);
+        super(HttpStatus.CONFLICT, "INSUFFICIENT_BALANCE", "Insufficient balance in account: " + accountId);
     }
 }

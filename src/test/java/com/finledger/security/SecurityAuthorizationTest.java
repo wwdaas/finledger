@@ -14,6 +14,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 @WebMvcTest(AccountController.class)
 @Import(SecurityConfiguration.class)
@@ -25,7 +26,16 @@ class SecurityAuthorizationTest {
     @Test
     void shouldRejectMissingBearerToken() throws Exception {
         mockMvc.perform(get("/api/accounts"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void shouldReturnJsonForInvalidBearerToken() throws Exception {
+        mockMvc.perform(get("/api/accounts")
+                        .header("Authorization", "Bearer broken.token.value"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
     }
 
     @Test

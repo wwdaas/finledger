@@ -1,12 +1,11 @@
 package com.finledger.transfer.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.BAD_REQUEST)
-public class SameAccountTransferException extends RuntimeException {
+public class SameAccountTransferException extends BusinessException {
 
     public SameAccountTransferException() {
-        super("Source and destination accounts must differ");
+        super(HttpStatus.BAD_REQUEST, "SAME_ACCOUNT_TRANSFER", "Source and destination accounts must differ");
     }
 }

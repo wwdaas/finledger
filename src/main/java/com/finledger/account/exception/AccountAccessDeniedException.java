@@ -1,12 +1,11 @@
 package com.finledger.account.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.FORBIDDEN)
-public class AccountAccessDeniedException extends RuntimeException {
+public class AccountAccessDeniedException extends BusinessException {
 
     public AccountAccessDeniedException(Long accountId) {
-        super("Access denied for account: " + accountId);
+        super(HttpStatus.FORBIDDEN, "ACCOUNT_ACCESS_DENIED", "Access denied for account: " + accountId);
     }
 }

@@ -1,12 +1,11 @@
 package com.finledger.ledger.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.BAD_REQUEST)
-public class InvalidTransactionFilterException extends RuntimeException {
+public class InvalidTransactionFilterException extends BusinessException {
 
     public InvalidTransactionFilterException(String message) {
-        super(message);
+        super(HttpStatus.BAD_REQUEST, "INVALID_TRANSACTION_FILTER", message);
     }
 }

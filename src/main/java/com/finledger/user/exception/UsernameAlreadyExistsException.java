@@ -1,12 +1,11 @@
 package com.finledger.user.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.CONFLICT)
-public class UsernameAlreadyExistsException extends RuntimeException {
+public class UsernameAlreadyExistsException extends BusinessException {
 
     public UsernameAlreadyExistsException(String username, Throwable cause) {
-        super("Username already exists: " + username, cause);
+        super(HttpStatus.CONFLICT, "USERNAME_ALREADY_EXISTS", "Username already exists: " + username, cause);
     }
 }

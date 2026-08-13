@@ -1,12 +1,11 @@
 package com.finledger.idempotency.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.CONFLICT)
-public class IdempotencyRequestInProgressException extends RuntimeException {
+public class IdempotencyRequestInProgressException extends BusinessException {
 
     public IdempotencyRequestInProgressException() {
-        super("A request with this Idempotency-Key is still being processed");
+        super(HttpStatus.CONFLICT, "IDEMPOTENCY_IN_PROGRESS", "A request with this Idempotency-Key is still being processed");
     }
 }

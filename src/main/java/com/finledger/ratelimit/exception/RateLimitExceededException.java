@@ -1,12 +1,11 @@
 package com.finledger.ratelimit.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
-public class RateLimitExceededException extends RuntimeException {
+public class RateLimitExceededException extends BusinessException {
 
     public RateLimitExceededException() {
-        super("Transfer rate limit exceeded; retry later");
+        super(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "Transfer rate limit exceeded; retry later");
     }
 }

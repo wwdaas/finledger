@@ -2,6 +2,7 @@ package com.finledger.security;
 
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import com.nimbusds.jose.proc.SecurityContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,7 +25,15 @@ import java.nio.charset.StandardCharsets;
 public class SecurityConfiguration {
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityErrorWriter securityErrorWriter(ObjectMapper objectMapper) {
+        return new SecurityErrorWriter(objectMapper);
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            SecurityErrorWriter errorWriter
+    ) throws Exception {
         return http
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session ->
@@ -32,7 +41,29 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/health", "/api/users", "/api/auth/login").permitAll()
                         .anyRequest().authenticated())
-                .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()))
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint((request, response, exception) ->
+                                errorWriter.write(
+                                        request, response, org.springframework.http.HttpStatus.UNAUTHORIZED,
+                                        "UNAUTHORIZED", "Authentication is required"
+                                ))
+                        .accessDeniedHandler((request, response, exception) ->
+                                errorWriter.write(
+                                        request, response, org.springframework.http.HttpStatus.FORBIDDEN,
+                                        "ACCESS_DENIED", "Access is denied"
+                                )))
+                .oauth2ResourceServer(oauth -> oauth
+                        .jwt(Customizer.withDefaults())
+                        .authenticationEntryPoint((request, response, exception) ->
+                                errorWriter.write(
+                                        request, response, org.springframework.http.HttpStatus.UNAUTHORIZED,
+                                        "UNAUTHORIZED", "Authentication is required"
+                                ))
+                        .accessDeniedHandler((request, response, exception) ->
+                                errorWriter.write(
+                                        request, response, org.springframework.http.HttpStatus.FORBIDDEN,
+                                        "ACCESS_DENIED", "Access is denied"
+                                )))
                 .build();
     }
 

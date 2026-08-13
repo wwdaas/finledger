@@ -1,12 +1,11 @@
 package com.finledger.idempotency.exception;
 
+import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
 
-@ResponseStatus(HttpStatus.CONFLICT)
-public class IdempotencyConflictException extends RuntimeException {
+public class IdempotencyConflictException extends BusinessException {
 
     public IdempotencyConflictException() {
-        super("Idempotency-Key was already used with a different request");
+        super(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key was already used with a different request");
     }
 }
