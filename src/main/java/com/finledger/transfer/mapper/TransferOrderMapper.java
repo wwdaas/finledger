@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 @Mapper
 public interface TransferOrderMapper extends BaseMapper<TransferOrderEntity> {
@@ -30,5 +31,19 @@ public interface TransferOrderMapper extends BaseMapper<TransferOrderEntity> {
             @Param("transferId") Long transferId,
             @Param("targetStatus") String targetStatus,
             @Param("completedAt") LocalDateTime completedAt
+    );
+
+    @Select("""
+            SELECT COALESCE(SUM(amount), 0.00)
+            FROM transfer_order
+            WHERE initiator_user_id = #{userId}
+              AND status IN ('SUCCESS', 'PENDING', 'SETTLED')
+              AND created_at >= #{from}
+              AND created_at < #{to}
+            """)
+    BigDecimal sumAcceptedOutgoing(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to
     );
 }
