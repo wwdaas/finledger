@@ -42,7 +42,6 @@ public class AccountService {
             AccountEntity account = new AccountEntity();
             account.setUserId(userId);
             account.setAccountNo(accountNumberGenerator.nextAccountNo());
-            account.setBalance(BigDecimal.ZERO.setScale(2));
             account.setAvailableBalance(BigDecimal.ZERO.setScale(2));
             account.setFrozenBalance(BigDecimal.ZERO.setScale(2));
             account.setCurrency(CNY);
@@ -135,7 +134,7 @@ public class AccountService {
         return new AccountResponse(
                 account.getId(),
                 account.getAccountNo(),
-                account.getBalance(),
+                account.getTotalBalance(),
                 account.getAvailableBalance(),
                 account.getFrozenBalance(),
                 account.getCurrency(),

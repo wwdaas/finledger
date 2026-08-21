@@ -36,6 +36,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataAccessException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -514,6 +515,85 @@ class FinancialFlowIntegrationTest {
                 .isInstanceOf(com.finledger.settlement.exception.TransactionNotFoundException.class);
     }
 
+    @Test
+    void shouldRechargeAvailableBalanceWithoutChangingFrozenBalance() {
+        Long owner = createUser("dual_recharge_owner");
+        Long accountId = createAccount(owner);
+        rechargeService.recharge(owner, accountId, money("150.00"));
+        setBalanceComponents(accountId, "100.00", "50.00");
+
+        var response = rechargeService.recharge(owner, accountId, money("200.00"));
+
+        assertThat(response.availableBalance()).isEqualByComparingTo("300.00");
+        assertThat(response.frozenBalance()).isEqualByComparingTo("50.00");
+        assertThat(response.totalBalance()).isEqualByComparingTo("350.00");
+        assertThat(availableBalance(accountId)).isEqualByComparingTo("300.00");
+        assertThat(frozenBalance(accountId)).isEqualByComparingTo("50.00");
+        assertThat(balance(accountId)).isEqualByComparingTo("350.00");
+        TransactionRecordEntity latest = transactionRecordMapper.selectList(null).stream()
+                .max(java.util.Comparator.comparing(TransactionRecordEntity::getId))
+                .orElseThrow();
+        assertThat(latest.getBalanceBefore()).isEqualByComparingTo("150.00");
+        assertThat(latest.getBalanceAfter()).isEqualByComparingTo("350.00");
+    }
+
+    @Test
+    void shouldTransferAvailableBalanceAndPreserveFrozenBalance() {
+        Long owner = createUser("dual_transfer_owner");
+        Long receiver = createUser("dual_transfer_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1200.00"));
+        rechargeService.recharge(receiver, to, money("500.00"));
+        setBalanceComponents(from, "1000.00", "200.00");
+
+        TransferResponse response = transferService.transfer(
+                owner, "dual-transfer-key", new TransferRequest(from, to, money("300.00"))
+        );
+
+        assertThat(response.fromTotalBalance()).isEqualByComparingTo("900.00");
+        assertThat(response.toTotalBalance()).isEqualByComparingTo("800.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(availableBalance(to)).isEqualByComparingTo("800.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("200.00");
+        assertThat(balance(from)).isEqualByComparingTo("900.00");
+    }
+
+    @Test
+    void shouldNotSpendFrozenBalanceInImmediateTransfer() {
+        Long owner = createUser("frozen_spend_owner");
+        Long receiver = createUser("frozen_spend_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        setBalanceComponents(from, "100.00", "900.00");
+
+        assertThatThrownBy(() -> transferService.transfer(
+                owner, "frozen-spend-key", new TransferRequest(from, to, money("500.00"))
+        )).isInstanceOf(InsufficientBalanceException.class);
+
+        assertThat(availableBalance(from)).isEqualByComparingTo("100.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("900.00");
+        assertThat(balance(from)).isEqualByComparingTo("1000.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void shouldEnforceDualBalanceDatabaseConstraints() {
+        Long owner = createUser("dual_constraint_owner");
+        Long accountId = createAccount(owner);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE account SET available_balance = -0.01 WHERE id = ?", accountId
+        )).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE account SET frozen_balance = -0.01 WHERE id = ?", accountId
+        )).isInstanceOf(DataAccessException.class);
+
+        assertThat(availableBalance(accountId)).isEqualByComparingTo("0.00");
+        assertThat(frozenBalance(accountId)).isEqualByComparingTo("0.00");
+    }
+
     private static MySQLContainer mysqlContainer() {
         MySQLContainer container = new MySQLContainer("mysql:8.4.11");
         container.withDatabaseName("finledger_test");
@@ -521,7 +601,8 @@ class FinancialFlowIntegrationTest {
         container.withPassword("finledger_test_password");
         container.withInitScripts(
                 "database/schema/V1__create_core_tables.sql",
-                "database/schema/V2__add_settlement_and_risk.sql"
+                "database/schema/V2__add_settlement_and_risk.sql",
+                "database/schema/V3__remove_redundant_account_balance.sql"
         );
         container.withCommand("--log-bin-trust-function-creators=1");
         container.withStartupTimeout(Duration.ofMinutes(2));
@@ -543,7 +624,7 @@ class FinancialFlowIntegrationTest {
     }
 
     private BigDecimal balance(Long accountId) {
-        return accountMapper.selectById(accountId).getBalance();
+        return accountMapper.selectById(accountId).getTotalBalance();
     }
 
     private BigDecimal availableBalance(Long accountId) {
@@ -552,6 +633,13 @@ class FinancialFlowIntegrationTest {
 
     private BigDecimal frozenBalance(Long accountId) {
         return accountMapper.selectById(accountId).getFrozenBalance();
+    }
+
+    private void setBalanceComponents(Long accountId, String available, String frozen) {
+        assertThat(jdbcTemplate.update(
+                "UPDATE account SET available_balance = ?, frozen_balance = ? WHERE id = ?",
+                money(available), money(frozen), accountId
+        )).isEqualTo(1);
     }
 
     private BigDecimal money(String value) {

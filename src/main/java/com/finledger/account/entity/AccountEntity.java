@@ -17,8 +17,6 @@ public class AccountEntity {
 
     private String accountNo;
 
-    private BigDecimal balance;
-
     private BigDecimal availableBalance;
 
     private BigDecimal frozenBalance;
@@ -57,14 +55,6 @@ public class AccountEntity {
         this.accountNo = accountNo;
     }
 
-    public BigDecimal getBalance() {
-        return balance;
-    }
-
-    public void setBalance(BigDecimal balance) {
-        this.balance = balance;
-    }
-
     public BigDecimal getAvailableBalance() {
         return availableBalance;
     }
@@ -79,6 +69,10 @@ public class AccountEntity {
 
     public void setFrozenBalance(BigDecimal frozenBalance) {
         this.frozenBalance = frozenBalance;
+    }
+
+    public BigDecimal getTotalBalance() {
+        return availableBalance.add(frozenBalance);
     }
 
     public String getCurrency() {

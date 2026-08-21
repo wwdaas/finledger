@@ -6,7 +6,7 @@
 待处理交易预留、但尚未最终扣减的资金。三者满足：
 
 ```text
-balance = availableBalance + frozenBalance
+totalBalance = availableBalance + frozenBalance
 ```
 
 如果创建待处理交易时直接永久扣款，后续审核失败或用户撤销时就缺少明确的预留阶段；如果只写

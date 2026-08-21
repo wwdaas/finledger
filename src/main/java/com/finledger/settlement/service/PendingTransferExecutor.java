@@ -161,7 +161,7 @@ public class PendingTransferExecutor {
     ) {
         BigDecimal availableBefore = fromAccount.getAvailableBalance();
         BigDecimal frozenBefore = fromAccount.getFrozenBalance();
-        BigDecimal totalBefore = fromAccount.getBalance();
+        BigDecimal totalBefore = fromAccount.getTotalBalance();
         fromAccount.setAvailableBalance(MoneyAmounts.requireValidBalance(availableBefore.subtract(amount)));
         fromAccount.setFrozenBalance(MoneyAmounts.requireValidBalance(frozenBefore.add(amount)));
         fromAccount.setVersion(fromAccount.getVersion() + 1);
@@ -187,7 +187,7 @@ public class PendingTransferExecutor {
         return new DeferredTransferResponse(
                 order.getId(), order.getTransferNo(), order.getFromAccountId(), order.getToAccountId(),
                 order.getAmount(), order.getCurrency(), order.getStatus(), order.getRiskDecision(),
-                sourceAccount.getBalance(), sourceAccount.getAvailableBalance(),
+                sourceAccount.getTotalBalance(), sourceAccount.getAvailableBalance(),
                 sourceAccount.getFrozenBalance(), order.getCreatedAt(), order.getCompletedAt()
         );
     }

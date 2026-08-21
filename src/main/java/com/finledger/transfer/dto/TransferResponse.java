@@ -1,5 +1,7 @@
 package com.finledger.transfer.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
@@ -11,8 +13,8 @@ public record TransferResponse(
         BigDecimal amount,
         String currency,
         String status,
-        BigDecimal fromBalance,
-        BigDecimal toBalance,
+        @JsonProperty("fromBalance") BigDecimal fromTotalBalance,
+        @JsonProperty("toBalance") BigDecimal toTotalBalance,
         LocalDateTime completedAt
 ) {
 }

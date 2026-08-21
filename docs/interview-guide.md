@@ -86,8 +86,9 @@ Service 查询账户和流水时继续带用户归属条件。认证证明“你
 ### 13. 为什么账户要区分 availableBalance 和 frozenBalance？
 
 总额表示资产现状，可用额表示还能参与新交易的资金，冻结额表示已为待处理交易预留的资金。
-如果不冻结，只写 PENDING 订单，并发请求仍可重复花掉同一笔钱。项目保留 `balance` 作为兼容
-总额，并由数据库约束保证 `balance = available + frozen`。
+如果不冻结，只写 PENDING 订单，并发请求仍可重复花掉同一笔钱。数据库只保存 available 和
+frozen 两个权威金额，`totalBalance = availableBalance + frozenBalance` 由 Java 响应层计算，
+避免维护第三个冗余金额字段。冻结/解冻不改变总资金；结算才完成最终资金转移。
 
 ### 14. 为什么提交待处理交易时不能直接永久扣款？
 

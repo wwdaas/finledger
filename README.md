@@ -13,7 +13,7 @@ Phase 0—17 已完成，核心能力包括：
 - 同源响应式 Web 工作台，覆盖注册、登录、账户、充值、转账、流水与 AI 查询；
 - 用户注册、BCrypt 密码存储、登录和 HS256 JWT 鉴权；
 - 模拟资金账户创建、归属校验、余额查询和模拟充值；
-- `balance = availableBalance + frozenBalance` 双余额模型、冻结与解冻；
+- 数据库仅保存 `availableBalance` / `frozenBalance`，`totalBalance` 由两者计算；
 - `PENDING → SETTLED / CANCELLED` 交易状态机与并发状态竞争保护；
 - `@Transactional` 原子转账、余额校验和双边交易流水；
 - `SELECT ... FOR UPDATE` 悲观锁及固定账户 ID 加锁顺序；
@@ -126,20 +126,21 @@ PENDING
 
 ## 数据模型
 
-V1 从五张核心表起步；V2 以增量迁移加入资金变动和风控审计，共七张表：
+V1 从五张核心表起步；V2 以增量迁移引入双余额、资金变动和风控审计，V3 在完成
+旧余额回填后移除冗余 `balance` 列。当前共七张表：
 
 | 表 | 用途 | 关键约束 |
 | --- | --- | --- |
 | `sys_user` | 用户身份和状态 | 用户名唯一 |
-| `account` | 总额、可用额、冻结额和账户状态 | 三者非负且总额等于可用加冻结 |
+| `account` | 可用额、冻结额和账户状态 | 两项非负；总资金由二者计算 |
 | `transfer_order` | 立即或待处理转账的业务事实 | 状态、风控结论、金额和账户约束 |
 | `transaction_record` | 每次余额变化的不可变流水 | 业务/账户/方向唯一、前后余额可核对 |
 | `idempotency_record` | 请求执行权和结果 | `(user_id, business_type, key)` 唯一 |
 | `fund_movement_record` | 冻结、清算、解冻的资金快照 | 业务/账户/动作唯一、前后值可核对 |
 | `risk_event` | 每条命中规则的可追溯判断 | 业务/规则唯一、绑定用户与订单 |
 
-`account.balance` 适合快速读取当前状态；`transaction_record` 用于历史、审计和对账。
-二者用途不同，不能只保存其中一个。完整 DDL 和取舍见
+`account.available_balance + account.frozen_balance` 是当前总资金；`transaction_record`
+用于历史、审计和对账。账户快照与不可变流水用途不同，不能只保存其中一个。完整 DDL 和取舍见
 [database-design.md](docs/database-design.md)。
 
 ## API 一览
@@ -218,9 +219,9 @@ docker compose up -d mysql redis
 docker compose ps
 ```
 
-DDL 会在全新 MySQL 数据卷首次初始化时按 V1、V2 顺序自动执行。Docker 的初始化目录不会
-对已有数据卷重复执行脚本；已有 V1 数据库需按 [database-design.md](docs/database-design.md)
-先备份、检查再单独应用 V2。
+DDL 会在全新 MySQL 数据卷首次初始化时按 V1、V2、V3 顺序自动执行。Docker 的初始化目录
+不会对已有数据卷重复执行脚本；已有数据库需按
+[database-design.md](docs/database-design.md) 先备份、检查，再按当前版本依次应用缺失迁移。
 
 本机运行应用：
 
@@ -278,13 +279,16 @@ curl http://localhost:8080/api/accounts \
 ./mvnw test
 ```
 
-当前套件共 60 个测试，覆盖：
+当前套件共 66 个测试，覆盖：
 
 - 正常转账和双边流水；
+- V1 旧账户余额无损迁移为 available/frozen，且最终移除冗余 `balance` 列；
+- 充值只增加可用余额、普通转账不使用冻结余额、双余额数据库非负约束；
 - 余额不足、非法金额、账户不存在和越权访问；
 - 第二条流水插入失败时余额、订单、流水和幂等占位全部回滚；
 - 两线程同时从 100 元账户各转 80 元时最多一笔成功；
 - 两线程重复同一个 `Idempotency-Key` 时只执行一次；
+- 升级前已保存的 `fromBalance/toBalance` 幂等响应仍可回放；
 - JWT 缺失、无效 token 和已验证用户身份传递；
 - Redis Lua 限流和 Redis 故障时的 fail-open 行为；
 - AI 只查询 JWT 用户自己的交易数据；

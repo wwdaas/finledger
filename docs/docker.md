@@ -15,9 +15,9 @@ docker compose up -d mysql redis
 docker compose --profile app up -d --build
 ```
 
-MySQL V1、V2 脚本挂载到 `/docker-entrypoint-initdb.d`，只在全新数据卷初始化时按文件名
-顺序执行；已有数据卷不会自动重复执行。V1 环境升级时应先备份并按
-[database-design.md](database-design.md) 单独应用 V2，不能通过删除数据卷代替迁移。
+MySQL V1、V2、V3 脚本挂载到 `/docker-entrypoint-initdb.d`，只在全新数据卷初始化时按文件名
+顺序执行；已有数据卷不会自动重复执行。旧环境升级时应先备份并按
+[database-design.md](database-design.md) 依次应用尚未执行的迁移，不能通过删除数据卷代替迁移。
 
 应用等待 MySQL 和 Redis 健康后启动。CI 使用 Java 17 执行全部 JUnit/Testcontainers 测试，
 再验证 Docker 镜像可以构建。

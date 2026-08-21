@@ -43,12 +43,12 @@ public class RechargeService {
             throw new AccountNotActiveException(accountId, account.getStatus());
         }
 
-        BigDecimal balanceBefore = account.getBalance();
-        BigDecimal balanceAfter = MoneyAmounts.requireValidBalance(balanceBefore.add(amount));
-        account.setBalance(balanceAfter);
-        account.setAvailableBalance(MoneyAmounts.requireValidBalance(
+        BigDecimal totalBefore = account.getTotalBalance();
+        BigDecimal availableAfter = MoneyAmounts.requireValidBalance(
                 account.getAvailableBalance().add(amount)
-        ));
+        );
+        account.setAvailableBalance(availableAfter);
+        BigDecimal totalAfter = MoneyAmounts.requireValidBalance(account.getTotalBalance());
         account.setVersion(account.getVersion() + 1);
         if (accountMapper.updateById(account) != 1) {
             throw new IllegalStateException("Expected one updated account row");
@@ -64,8 +64,8 @@ public class RechargeService {
         record.setDirection("CREDIT");
         record.setAmount(amount);
         record.setCurrency(account.getCurrency());
-        record.setBalanceBefore(balanceBefore);
-        record.setBalanceAfter(balanceAfter);
+        record.setBalanceBefore(totalBefore);
+        record.setBalanceAfter(totalAfter);
         if (transactionRecordMapper.insert(record) != 1) {
             throw new IllegalStateException("Expected one inserted transaction record");
         }
@@ -75,7 +75,9 @@ public class RechargeService {
                 record.getRecordNo(),
                 accountId,
                 amount,
-                balanceAfter
+                availableAfter,
+                account.getFrozenBalance(),
+                totalAfter
         );
     }
 }
