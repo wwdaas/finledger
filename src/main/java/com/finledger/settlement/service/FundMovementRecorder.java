@@ -31,11 +31,27 @@ public class FundMovementRecorder {
             BigDecimal frozenBefore,
             BigDecimal totalBefore
     ) {
+        record(
+                account, "DEFERRED_TRANSFER", businessId, action, amount,
+                availableBefore, frozenBefore, totalBefore
+        );
+    }
+
+    public void record(
+            AccountEntity account,
+            String businessType,
+            Long businessId,
+            String action,
+            BigDecimal amount,
+            BigDecimal availableBefore,
+            BigDecimal frozenBefore,
+            BigDecimal totalBefore
+    ) {
         FundMovementRecordEntity record = new FundMovementRecordEntity();
         record.setMovementNo(numberGenerator.nextMovementNo());
         record.setAccountId(account.getId());
         record.setUserId(account.getUserId());
-        record.setBusinessType("DEFERRED_TRANSFER");
+        record.setBusinessType(businessType);
         record.setBusinessId(businessId);
         record.setAction(action);
         record.setAmount(amount);
