@@ -1,4 +1,4 @@
-package com.finledger.settlement.exception;
+package com.finledger.account.exception;
 
 import com.finledger.common.exception.BusinessException;
 import org.springframework.http.HttpStatus;

@@ -9,7 +9,8 @@
         activeDeferredTransfer: null,
         transactionPage: 1,
         transactionTotalPages: 1,
-        idempotencyKey: createIdempotencyKey()
+        idempotencyKey: createIdempotencyKey(),
+        freezeIdempotencyKey: createIdempotencyKey("freeze")
     };
 
     const elements = {
@@ -21,7 +22,8 @@
         registerForm: document.querySelector("#register-form"),
         authTitle: document.querySelector("#auth-title"),
         authSubtitle: document.querySelector("#auth-subtitle"),
-        rechargeModal: document.querySelector("#recharge-modal")
+        rechargeModal: document.querySelector("#recharge-modal"),
+        freezeModal: document.querySelector("#freeze-modal")
     };
 
     class ApiRequestError extends Error {
@@ -77,7 +79,9 @@
             INSUFFICIENT_AVAILABLE_BALANCE: "付款账户可用余额不足",
             SAME_ACCOUNT_TRANSFER: "付款账户与收款账户不能相同",
             INVALID_AMOUNT: "请输入合法的两位小数金额",
-            IDEMPOTENCY_CONFLICT: "这个幂等键已用于另一笔转账",
+            INVALID_FREEZE_REQUEST: "冻结请求参数不合法",
+            IDEMPOTENCY_CONFLICT: "这个幂等键已用于另一笔请求",
+            IDEMPOTENCY_KEY_CONFLICT: "这个幂等键已用于另一笔请求",
             RATE_LIMIT_EXCEEDED: "操作过于频繁，请稍后再试",
             INVALID_TRANSACTION_STATE: "当前交易状态不允许执行这个操作",
             TRANSACTION_NOT_FOUND: "交易不存在或你无权查看",
@@ -88,11 +92,11 @@
         return messages[code] || fallback;
     }
 
-    function createIdempotencyKey() {
+    function createIdempotencyKey(prefix = "transfer") {
         const value = typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        return `web-transfer-${value}`;
+        return `web-${prefix}-${value}`;
     }
 
     function escapeHtml(value) {
@@ -252,7 +256,10 @@
                 </div>
                 <div class="account-card-footer">
                     <span>${escapeHtml(account.currency)} · VERSION ${escapeHtml(account.version)}</span>
-                    <button data-recharge-account="${escapeHtml(account.id)}" type="button">模拟充值 ＋</button>
+                    <span class="account-card-actions">
+                        <button data-freeze-account="${escapeHtml(account.id)}" type="button">冻结资金 ◈</button>
+                        <button data-recharge-account="${escapeHtml(account.id)}" type="button">模拟充值 ＋</button>
+                    </span>
                 </div>
             </article>`).join("");
 
@@ -267,8 +274,10 @@
         ).join("");
         document.querySelector("#transfer-from").innerHTML = optionHtml || '<option value="">请先创建账户</option>';
         document.querySelector("#recharge-account").innerHTML = optionHtml || '<option value="">请先创建账户</option>';
+        document.querySelector("#freeze-account").innerHTML = optionHtml || '<option value="">请先创建账户</option>';
         document.querySelector("#filter-account").innerHTML = `<option value="">全部账户</option>${optionHtml}`;
         document.querySelector("#idempotency-key").textContent = state.idempotencyKey;
+        document.querySelector("#freeze-idempotency-key").textContent = state.freezeIdempotencyKey;
     }
 
     function transactionMeta(item) {
@@ -365,6 +374,22 @@
         elements.rechargeModal.classList.add("hidden");
     }
 
+    function openFreezeModal(accountId) {
+        if (!state.accounts.length) {
+            showToast("请先创建一个资金账户", "error");
+            return;
+        }
+        state.freezeIdempotencyKey = createIdempotencyKey("freeze");
+        document.querySelector("#freeze-idempotency-key").textContent = state.freezeIdempotencyKey;
+        if (accountId) document.querySelector("#freeze-account").value = String(accountId);
+        elements.freezeModal.classList.remove("hidden");
+        window.setTimeout(() => document.querySelector("#freeze-amount").focus(), 50);
+    }
+
+    function closeFreezeModal() {
+        elements.freezeModal.classList.add("hidden");
+    }
+
     async function handleRecharge(event) {
         event.preventDefault();
         const form = event.currentTarget;
@@ -379,6 +404,34 @@
             showToast(`充值成功，当前可用余额 ${formatMoney(result.availableBalance)}`);
             form.reset();
             closeRechargeModal();
+            await refreshWorkspace();
+        } catch (error) {
+            showToast(error.message, "error");
+        } finally {
+            setSubmitting(form, false);
+        }
+    }
+
+    async function handleFreeze(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const accountId = document.querySelector("#freeze-account").value;
+        const payload = {
+            amount: Number(document.querySelector("#freeze-amount").value),
+            businessType: document.querySelector("#freeze-business-type").value,
+            remark: document.querySelector("#freeze-remark").value || null
+        };
+        setSubmitting(form, true, "冻结处理中…");
+        try {
+            const result = await request(`/api/accounts/${accountId}/freezes`, {
+                method: "POST",
+                headers: {"Idempotency-Key": state.freezeIdempotencyKey},
+                body: JSON.stringify(payload)
+            });
+            showToast(`冻结 ${formatMoney(result.amount)} 成功，总余额保持 ${formatMoney(result.totalBalance)}`);
+            form.reset();
+            document.querySelector("#freeze-business-type").value = "TRADE";
+            closeFreezeModal();
             await refreshWorkspace();
         } catch (error) {
             showToast(error.message, "error");
@@ -625,13 +678,18 @@
             if (createButton) createAccount(createButton);
             const rechargeButton = event.target.closest("[data-recharge-account]");
             if (rechargeButton) openRechargeModal(rechargeButton.dataset.rechargeAccount);
+            const freezeButton = event.target.closest("[data-freeze-account]");
+            if (freezeButton) openFreezeModal(freezeButton.dataset.freezeAccount);
             if (event.target.closest("[data-close-modal]")) closeRechargeModal();
+            if (event.target.closest("[data-close-freeze]")) closeFreezeModal();
         });
         document.addEventListener("keydown", event => {
             if (event.key === "Escape" && !elements.rechargeModal.classList.contains("hidden")) closeRechargeModal();
+            if (event.key === "Escape" && !elements.freezeModal.classList.contains("hidden")) closeFreezeModal();
         });
 
         document.querySelector("#recharge-form").addEventListener("submit", handleRecharge);
+        document.querySelector("#freeze-form").addEventListener("submit", handleFreeze);
         document.querySelector("#transfer-form").addEventListener("submit", handleTransfer);
         document.querySelector("#pending-transfer-button").addEventListener("click", handlePendingTransfer);
         document.querySelector("#settle-transfer-button").addEventListener("click", () => changeDeferredTransferState("settlement"));

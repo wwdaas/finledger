@@ -143,6 +143,52 @@ transactionNo 可以来自问题，但 userId 只能来自验证后的 JWT。Jav
 `initiator_user_id` 和 DEFERRED 类型，风险事件查询也强制绑定同一 userId。只有这两次权限查询
 成功后的数据才会传给解释器；测试证明收款人即使知道交易号也无法获取付款人的状态、风险和余额。
 
+### 23. 独立 Freeze 和 Transfer 有什么区别？
+
+Freeze 是单账户内部 `available → frozen` 的资金状态迁移，前后总资金不变，也不产生目标账户
+入账。Transfer 是账户 A 到账户 B 的资金转移，A 的总额减少、B 的总额增加，并产生双边借贷
+流水。因此独立冻结使用 `fund_freeze` 和资金变化快照，而不是强行复用 transfer_order。
+
+### 24. 为什么冻结资金需要事务？
+
+一次冻结包含幂等执行权、账户双余额更新、`fund_freeze`、`fund_movement_record` 和成功响应快照。
+这些事实必须共同提交或共同回滚，否则可能出现资金已冻结但没有业务记录，或者幂等记录成功但
+资金变化失败。`FreezeExecutor.execute` 的 `@Transactional` 覆盖了完整边界。
+
+### 25. 为什么只用 `@Transactional` 不能防止并发超冻？
+
+事务原子性不等于并发串行化。两个事务仍可能都读取 `available=100` 并各自判断冻结 80 可行。
+项目还要在事务内 `SELECT ... FOR UPDATE` 锁住账户行，让第二个事务等待并在获得锁后看到
+`available=20`，从而失败。
+
+### 26. 为什么余额检查必须发生在获取数据库锁以后？
+
+锁前读取的余额可能在等待期间被别的事务改变，属于陈旧快照。先加锁再读取、再判断，才能让
+“我检查的余额”和“接下来更新的余额”属于同一串行化临界区。更新 SQL 还带
+`available_balance >= amount` 作为数据库侧二次保护。
+
+### 27. 为什么 frozenBalance 不能参与普通转账？
+
+冻结额代表已经为其他业务预留、暂时不可再次使用的资金。普通转账如果按 totalBalance 判断，
+就会重复消费同一笔资产。立即转账只能检查并扣减 availableBalance，frozenBalance 保持不变。
+
+### 28. 为什么 Freeze 也需要 Idempotency-Key？
+
+冻结是资金写操作，网络超时重试和重复点击都可能把同一请求执行两次。系统复用 MySQL 唯一约束、
+请求 SHA-256 摘要和响应回放：同 key 同参数只冻结一次，同 key 不同参数返回 409。
+
+### 29. 两个并发 Freeze 如何保证最多一个成功？
+
+它们竞争同一账户的 InnoDB 行锁。第一个事务从 100 冻结 80 并提交后，第二个才获得锁，读取到
+20 并抛出 `InsufficientAvailableBalanceException`。条件 UPDATE 和非负 CHECK 继续提供防御，
+所以最终只能是 available=20、frozen=80。
+
+### 30. 如何证明数据库锁真的生效？
+
+不能用 Mockito 证明。`FinancialFlowIntegrationTest` 用 Testcontainers 启动真实 MySQL 8，两个
+线程通过 CountDownLatch 同时起跑，各使用不同幂等 key 冻结 80，断言恰好一个成功并核对数据库
+余额、冻结记录和 movement 数量。另一个并发测试用相同 key，证明数据库唯一约束只执行一次。
+
 ## 代码讲解路线
 
 面试现场可以按以下顺序打开代码：
@@ -154,8 +200,10 @@ transactionNo 可以来自问题，但 userId 只能来自验证后的 JWT。Jav
 5. `TransferService`：展示校验、双账户更新、订单和双边流水；
 6. `FinancialFlowIntegrationTest`：用真实数据库测试证明设计；
 7. `PendingTransferExecutor` / `SettlementService`：展示双余额与状态竞争；
-8. `RiskEngine` 与三条 `RiskRule`：展示策略聚合和事务阶段；
-9. `AiRiskExplanationService`：解释 LLM 与核心系统之间的权限边界。
+8. `FreezeExecutor`：展示独立冻结事务、单账户行锁和双重余额保护；
+9. `V4__add_fund_freeze.sql`：展示业务记录、约束和既有幂等扩展；
+10. `RiskEngine` 与三条 `RiskRule`：展示策略聚合和事务阶段；
+11. `AiRiskExplanationService`：解释 LLM 与核心系统之间的权限边界。
 
 不要只背注解作用。重点说明每个设计在防止什么具体失败，以及测试如何证明它。
 
@@ -173,6 +221,8 @@ transactionNo 可以来自问题，但 userId 只能来自验证后的 JWT。Jav
 - 使用 Redis Lua 实现按用户转账限流，明确 MySQL 为核心事实源，并实现 Redis 故障降级策略；
 - 设计 available/frozen 双余额模型和 PENDING/SETTLED/CANCELLED 状态机，在本地事务中实现
   冻结、结算与取消解冻，并以订单行锁和条件更新解决并发终态竞争；
+- 基于 Spring 事务、InnoDB 账户行锁和条件更新实现独立资金冻结，以 MySQL 唯一约束和响应
+  回放防止并发重复冻结，并通过 Testcontainers 验证超冻保护与异常整体回滚；
 - 基于 Strategy 模式实现大额、高频、自然日累计限额三类风控规则，统一聚合
   PASS/REVIEW/REJECT，并持久化可追溯 Risk Event；
 - 构建只读 AI 交易分析流水线，以严格结构化意图、Java 参数校验、JWT 数据隔离和预定义 SQL

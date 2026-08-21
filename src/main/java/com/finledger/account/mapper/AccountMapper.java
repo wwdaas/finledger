@@ -32,4 +32,18 @@ public interface AccountMapper extends BaseMapper<AccountEntity> {
             @Param("newAvailableBalance") java.math.BigDecimal newAvailableBalance,
             @Param("expectedVersion") Long expectedVersion
     );
+
+    @Update("""
+            UPDATE account
+            SET available_balance = available_balance - #{amount},
+                frozen_balance = frozen_balance + #{amount},
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP(3)
+            WHERE id = #{accountId}
+              AND available_balance >= #{amount}
+            """)
+    int moveAvailableToFrozen(
+            @Param("accountId") Long accountId,
+            @Param("amount") java.math.BigDecimal amount
+    );
 }

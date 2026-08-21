@@ -16,6 +16,24 @@ public class IdempotencyRequestHasher {
         String canonicalRequest = request.fromAccountId()
                 + "|" + request.toAccountId()
                 + "|" + MoneyAmounts.requirePositive(request.amount()).toPlainString();
+        return sha256(canonicalRequest);
+    }
+
+    public String hashFreeze(
+            Long accountId,
+            java.math.BigDecimal amount,
+            String businessType,
+            String remark
+    ) {
+        String normalizedRemark = remark == null ? "" : remark;
+        String canonicalRequest = accountId
+                + "|" + MoneyAmounts.requirePositive(amount).toPlainString()
+                + "|" + businessType.length() + ":" + businessType
+                + "|" + normalizedRemark.length() + ":" + normalizedRemark;
+        return sha256(canonicalRequest);
+    }
+
+    private String sha256(String canonicalRequest) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             return HexFormat.of().formatHex(digest.digest(canonicalRequest.getBytes(StandardCharsets.UTF_8)));
