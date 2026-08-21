@@ -29,6 +29,7 @@ flowchart TB
     subgraph Domain[业务服务]
         US[User + Authentication]
         AS[Account + Recharge]
+        FS[Standalone Fund Freeze]
         TS[Idempotent Transfer Executor]
         SS[Pending + Settlement + Cancellation]
         RS[Risk Engine + Rules]
@@ -41,7 +42,7 @@ flowchart TB
         AM[Account Mapper]
         TM[Transfer + Idempotency Mappers]
         LM[Transaction Record Mapper]
-        FM[Fund Movement Mapper]
+        FM[Fund Freeze + Movement Mappers]
         RM[Risk Event Mapper]
     end
 
@@ -56,6 +57,9 @@ flowchart TB
     SC --> AC
     UC --> US --> UM --> DB
     BC --> AS --> AM --> DB
+    BC --> FS
+    FS --> AM
+    FS --> FM --> DB
     BC --> TS
     BC --> SS
     TS --> AM
@@ -155,6 +159,18 @@ sequenceDiagram
 `totalBalance` 快照。数据库检查约束要求借记满足 `after = before - amount`，贷记满足
 `after = before + amount`。当前双余额负责快速读，流水负责解释“总资金为什么是这个数”以及
 后续对账；冻结组成变化由 `fund_movement_record` 的 available/frozen/total 快照记录。
+
+## 独立资金冻结事务
+
+`FreezeExecutor.execute` 把幂等占位、账户 `FOR UPDATE`、available→frozen 条件更新、
+`fund_freeze`、`fund_movement_record` 和成功快照放在同一事务。它与带目标账户和后续生命周期的
+Deferred Transfer 分开建模，冻结不会创建 `transfer_order`，也不会改变账户总资金。
+
+同一账户上的并发冻结会竞争账户行锁；等待者获得锁后必须基于最新可用额重新校验。更新语句的
+`available_balance >= amount` 条件和数据库非负 CHECK 是额外防线。重复请求则先竞争
+`(user_id, FUND_FREEZE, idempotency_key)` 唯一约束，只有一个事务实际修改资金。
+
+详细流程和不变量见 [fund-freeze.md](fund-freeze.md)。
 
 ## 待处理交易与风控事务
 

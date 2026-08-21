@@ -985,6 +985,15 @@ textarea:focus {
     font-weight: 800;
 }
 
+.account-card-actions {
+    display: flex;
+    gap: 13px;
+}
+
+.account-card-actions button:first-child {
+    color: var(--forest);
+}
+
 .empty-account-card {
     display: grid;
     min-height: 190px;
@@ -1704,6 +1713,10 @@ tbody tr:last-child td {
     color: var(--muted);
     font-size: 11px;
     line-height: 1.6;
+}
+
+.modal-card .idempotency-box {
+    margin-bottom: 18px;
 }
 
 .modal-close {

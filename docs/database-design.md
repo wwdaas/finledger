@@ -4,7 +4,8 @@
 
 MySQL 是账户余额、订单、流水、幂等结果和风险事件的 Source of Truth。V1 从五张核心表
 起步；V2 用增量 DDL 加入双余额模型、资金变动记录和风险事件；V3 在确认数据完成回填后
-移除过渡期的冗余 `balance` 列。已经执行过的迁移从不回写。
+移除过渡期的冗余 `balance` 列；V4 增加独立资金冻结业务记录并扩展既有幂等/资金变化类型。
+已经执行过的迁移从不回写。
 
 ```mermaid
 erDiagram
@@ -13,10 +14,12 @@ erDiagram
     SYS_USER ||--o{ TRANSACTION_RECORD : views
     SYS_USER ||--o{ IDEMPOTENCY_RECORD : submits
     SYS_USER ||--o{ RISK_EVENT : owns
+    SYS_USER ||--o{ FUND_FREEZE : creates
     ACCOUNT ||--o{ TRANSFER_ORDER : sends
     ACCOUNT ||--o{ TRANSFER_ORDER : receives
     ACCOUNT ||--o{ TRANSACTION_RECORD : records
     ACCOUNT ||--o{ FUND_MOVEMENT_RECORD : changes
+    ACCOUNT ||--o{ FUND_FREEZE : freezes
     TRANSFER_ORDER ||--o{ FUND_MOVEMENT_RECORD : produces
     TRANSFER_ORDER ||--o{ RISK_EVENT : produces
 ```
@@ -30,6 +33,7 @@ erDiagram
 | `transfer_order` | 立即/待处理交易订单、状态和总风控结论 |
 | `transaction_record` | 充值和最终转账的不可变借贷流水 |
 | `idempotency_record` | 幂等请求的唯一执行权、摘要和成功快照 |
+| `fund_freeze` | 独立资金冻结业务事实、外部冻结号和当前 FROZEN 状态 |
 | `fund_movement_record` | FREEZE / SETTLEMENT / UNFREEZE 的三类余额快照 |
 | `risk_event` | 每条命中风控规则的等级、结论和原因 |
 
@@ -61,6 +65,7 @@ frozen_balance >= 0
 | 充值 | `+amount` | `+amount` | 0 |
 | 立即转出 | `-amount` | `-amount` | 0 |
 | 创建 PENDING | 0 | `-amount` | `+amount` |
+| 独立 FREEZE | 0 | `-amount` | `+amount` |
 | SETTLEMENT（来源） | `-amount` | 0 | `-amount` |
 | SETTLEMENT（目标） | `+amount` | `+amount` | 0 |
 | CANCELLATION | 0 | `+amount` | `-amount` |
@@ -74,6 +79,7 @@ frozen_balance >= 0
 - 金额统一为 MySQL `DECIMAL(19,2)` 和 Java `BigDecimal`；
 - InnoDB 提供本地事务、外键与行锁；
 - 账户号、转账号、流水号和资金变动号唯一；
+- 独立冻结号唯一，冻结金额为正，用户和账户由外键约束；
 - 转账金额为正、来源目标不能相同；
 - 借贷流水的 before/after 必须与 direction 和 amount 对账；
 - 风险事件按 `(business_no, rule_code)` 去重；
@@ -85,7 +91,7 @@ frozen_balance >= 0
 
 ## 迁移应用
 
-新数据库由 Compose 初始化目录按文件名顺序执行 V1、V2、V3。
+新数据库由 Compose 初始化目录按文件名顺序执行 V1、V2、V3、V4。
 
 迁移采用“新增、回填、收敛”而不是直接改写 V1：
 
@@ -93,11 +99,12 @@ frozen_balance >= 0
 2. V2 将每个旧账户的 `balance = X` 回填为 `available_balance = X`、`frozen_balance = 0`；
 3. V2 用约束验证过渡期 `balance = available_balance + frozen_balance`；
 4. V3 移除依赖旧列的约束和 `balance` 列，最终只保留双余额。
+5. V4 创建 `fund_freeze`，并允许幂等和资金变化记录使用 `FUND_FREEZE` 业务类型。
 
 因此迁移前后的资金恒等式为
 `old balance = new available_balance + new frozen_balance`，旧资金不会丢失。
 
-已有 V1 数据库依次执行 V2、V3：
+已有 V1 数据库依次执行 V2、V3、V4：
 
 ```bash
 docker compose exec -T mysql sh -c \
@@ -107,9 +114,14 @@ docker compose exec -T mysql sh -c \
 docker compose exec -T mysql sh -c \
   'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE"' \
   < database/schema/V3__remove_redundant_account_balance.sql
+
+docker compose exec -T mysql sh -c \
+  'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE"' \
+  < database/schema/V4__add_fund_freeze.sql
 ```
 
-已经执行 V2 的数据库只执行 V3。迁移文件刻意不使用 `IF NOT EXISTS`，重复执行会显式失败，
+已经执行 V3 的数据库只执行 V4。迁移文件刻意不使用 `IF NOT EXISTS`，重复执行会显式失败，
 从而暴露环境漂移。执行前应备份，并通过 `information_schema.columns` 确认当前版本：V1 只有
-`balance`，V2 三列共存，V3 只有 `available_balance` / `frozen_balance`。后续可引入 Flyway
+`balance`，V2 三列共存，V3 只有 `available_balance` / `frozen_balance`，V4 还存在
+`fund_freeze` 表。后续可引入 Flyway
 自动记录迁移版本，但不能回写 V1 假装结构从未演进。
