@@ -9,6 +9,12 @@ import com.finledger.ai.dto.AiAnalysisResponse;
 import com.finledger.ai.service.AiRiskExplanationService;
 import com.finledger.ai.service.AiTransactionAssistantService;
 import com.finledger.common.money.InvalidAmountException;
+import com.finledger.freeze.dto.FreezeRequest;
+import com.finledger.freeze.dto.FreezeResponse;
+import com.finledger.freeze.entity.FundFreezeEntity;
+import com.finledger.freeze.mapper.FundFreezeMapper;
+import com.finledger.freeze.service.FreezeService;
+import com.finledger.idempotency.exception.IdempotencyConflictException;
 import com.finledger.idempotency.mapper.IdempotencyRecordMapper;
 import com.finledger.ledger.entity.TransactionRecordEntity;
 import com.finledger.ledger.mapper.TransactionRecordMapper;
@@ -16,7 +22,7 @@ import com.finledger.recharge.service.RechargeService;
 import com.finledger.risk.exception.RiskRejectedException;
 import com.finledger.risk.mapper.RiskEventMapper;
 import com.finledger.risk.service.RiskEventQueryService;
-import com.finledger.settlement.exception.InsufficientAvailableBalanceException;
+import com.finledger.account.exception.InsufficientAvailableBalanceException;
 import com.finledger.settlement.mapper.FundMovementRecordMapper;
 import com.finledger.settlement.service.PendingTransferService;
 import com.finledger.settlement.service.SettlementService;
@@ -69,6 +75,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class FinancialFlowIntegrationTest {
 
     private static final String FAILURE_TRIGGER = "fail_transfer_record_insert";
+    private static final String FREEZE_FAILURE_TRIGGER = "fail_fund_freeze_insert";
 
     @Container
     static final MySQLContainer MYSQL = mysqlContainer();
@@ -85,11 +92,13 @@ class FinancialFlowIntegrationTest {
     @Autowired private TransferOrderMapper transferOrderMapper;
     @Autowired private TransactionRecordMapper transactionRecordMapper;
     @Autowired private FundMovementRecordMapper fundMovementRecordMapper;
+    @Autowired private FundFreezeMapper fundFreezeMapper;
     @Autowired private RiskEventMapper riskEventMapper;
     @Autowired private IdempotencyRecordMapper idempotencyRecordMapper;
     @Autowired private AccountService accountService;
     @Autowired private RechargeService rechargeService;
     @Autowired private IdempotentTransferService transferService;
+    @Autowired private FreezeService freezeService;
     @Autowired private PendingTransferService pendingTransferService;
     @Autowired private SettlementService settlementService;
     @Autowired private CancellationService cancellationService;
@@ -101,11 +110,12 @@ class FinancialFlowIntegrationTest {
 
     @BeforeEach
     void cleanDatabase() {
-        dropFailureTrigger();
+        dropFailureTriggers();
         jdbcTemplate.update("DELETE FROM risk_event");
         jdbcTemplate.update("DELETE FROM fund_movement_record");
         jdbcTemplate.update("DELETE FROM transaction_record");
         jdbcTemplate.update("DELETE FROM idempotency_record");
+        jdbcTemplate.update("DELETE FROM fund_freeze");
         jdbcTemplate.update("DELETE FROM transfer_order");
         jdbcTemplate.update("DELETE FROM account");
         jdbcTemplate.update("DELETE FROM sys_user");
@@ -113,7 +123,7 @@ class FinancialFlowIntegrationTest {
 
     @AfterEach
     void removeFailureTrigger() {
-        dropFailureTrigger();
+        dropFailureTriggers();
     }
 
     @Test
@@ -594,6 +604,208 @@ class FinancialFlowIntegrationTest {
         assertThat(frozenBalance(accountId)).isEqualByComparingTo("0.00");
     }
 
+    @Test
+    void shouldFreezeFundsAndPreserveTotalBalance() {
+        Long owner = createUser("standalone_freeze_owner");
+        Long accountId = createAccount(owner);
+        rechargeService.recharge(owner, accountId, money("1000.00"));
+
+        FreezeResponse response = freezeService.freeze(
+                owner,
+                accountId,
+                "freeze-normal-key",
+                new FreezeRequest(money("300.00"), "TRADE", "Pending transaction")
+        );
+
+        assertThat(response.status()).isEqualTo("FROZEN");
+        assertThat(response.freezeNo()).startsWith("FRZ");
+        assertThat(response.availableBalance()).isEqualByComparingTo("700.00");
+        assertThat(response.frozenBalance()).isEqualByComparingTo("300.00");
+        assertThat(response.totalBalance()).isEqualByComparingTo("1000.00");
+        assertThat(balance(accountId)).isEqualByComparingTo("1000.00");
+        FundFreezeEntity stored = fundFreezeMapper.selectById(response.freezeId());
+        assertThat(stored.getUserId()).isEqualTo(owner);
+        assertThat(stored.getAccountId()).isEqualTo(accountId);
+        assertThat(stored.getAmount()).isEqualByComparingTo("300.00");
+        assertThat(stored.getCreatedAt()).isNotNull();
+        assertThat(fundMovementRecordMapper.selectList(null))
+                .singleElement()
+                .satisfies(movement -> {
+                    assertThat(movement.getBusinessType()).isEqualTo("FUND_FREEZE");
+                    assertThat(movement.getAction()).isEqualTo("FREEZE");
+                    assertThat(movement.getTotalBefore()).isEqualByComparingTo("1000.00");
+                    assertThat(movement.getTotalAfter()).isEqualByComparingTo("1000.00");
+                });
+    }
+
+    @Test
+    void shouldRejectInvalidOrInsufficientStandaloneFreezeWithoutMutation() {
+        Long owner = createUser("standalone_freeze_validation_owner");
+        Long accountId = createAccount(owner);
+        rechargeService.recharge(owner, accountId, money("100.00"));
+        setBalanceComponents(accountId, "100.00", "900.00");
+
+        assertThatThrownBy(() -> freezeService.freeze(
+                owner, accountId, "freeze-zero", new FreezeRequest(money("0.00"), "TRADE", null)
+        )).isInstanceOf(InvalidAmountException.class);
+        assertThatThrownBy(() -> freezeService.freeze(
+                owner, accountId, "freeze-negative", new FreezeRequest(money("-100.00"), "TRADE", null)
+        )).isInstanceOf(InvalidAmountException.class);
+        assertThatThrownBy(() -> freezeService.freeze(
+                owner, accountId, "freeze-insufficient", new FreezeRequest(money("300.00"), "TRADE", null)
+        )).isInstanceOf(InsufficientAvailableBalanceException.class);
+
+        assertThat(availableBalance(accountId)).isEqualByComparingTo("100.00");
+        assertThat(frozenBalance(accountId)).isEqualByComparingTo("900.00");
+        assertThat(fundFreezeMapper.selectCount(null)).isZero();
+        assertThat(idempotencyRecordMapper.selectCount(null)).isZero();
+    }
+
+    @Test
+    void shouldRejectMissingAndUnownedAccountForStandaloneFreeze() {
+        Long owner = createUser("standalone_freeze_permission_owner");
+        Long stranger = createUser("standalone_freeze_permission_stranger");
+        Long accountId = createAccount(owner);
+        rechargeService.recharge(owner, accountId, money("100.00"));
+        FreezeRequest request = new FreezeRequest(money("20.00"), "TRADE", null);
+
+        assertThatThrownBy(() -> freezeService.freeze(
+                owner, 999999L, "freeze-missing", request
+        )).isInstanceOf(AccountNotFoundException.class);
+        assertThatThrownBy(() -> freezeService.freeze(
+                stranger, accountId, "freeze-unowned", request
+        )).isInstanceOf(AccountAccessDeniedException.class);
+
+        assertThat(availableBalance(accountId)).isEqualByComparingTo("100.00");
+        assertThat(frozenBalance(accountId)).isEqualByComparingTo("0.00");
+        assertThat(fundFreezeMapper.selectCount(null)).isZero();
+        assertThat(idempotencyRecordMapper.selectCount(null)).isZero();
+    }
+
+    @Test
+    void shouldAllowOnlyOneConcurrentFreezeWhenAvailableBalanceIsInsufficientForBoth() throws Exception {
+        Long owner = createUser("standalone_freeze_concurrent_owner");
+        Long accountId = createAccount(owner);
+        rechargeService.recharge(owner, accountId, money("100.00"));
+
+        List<FreezeAttempt> attempts = runConcurrently(
+                () -> freezeAttempt(owner, accountId, "freeze-concurrent-a", "80.00"),
+                () -> freezeAttempt(owner, accountId, "freeze-concurrent-b", "80.00")
+        );
+
+        assertThat(attempts).filteredOn(FreezeAttempt::successful).hasSize(1);
+        assertThat(attempts).filteredOn(attempt -> !attempt.successful())
+                .extracting(FreezeAttempt::failure)
+                .allMatch(InsufficientAvailableBalanceException.class::isInstance);
+        assertThat(availableBalance(accountId)).isEqualByComparingTo("20.00");
+        assertThat(frozenBalance(accountId)).isEqualByComparingTo("80.00");
+        assertThat(balance(accountId)).isEqualByComparingTo("100.00");
+        assertThat(fundFreezeMapper.selectCount(null)).isEqualTo(1);
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(1);
+    }
+
+    @Test
+    void shouldRollBackEntireFreezeWhenFreezeRecordInsertFails() {
+        Long owner = createUser("standalone_freeze_rollback_owner");
+        Long accountId = createAccount(owner);
+        rechargeService.recharge(owner, accountId, money("1000.00"));
+        createFreezeFailureTrigger();
+
+        assertThatThrownBy(() -> freezeService.freeze(
+                owner,
+                accountId,
+                "freeze-rollback-key",
+                new FreezeRequest(money("300.00"), "TRADE", null)
+        )).isInstanceOf(RuntimeException.class);
+
+        assertThat(availableBalance(accountId)).isEqualByComparingTo("1000.00");
+        assertThat(frozenBalance(accountId)).isEqualByComparingTo("0.00");
+        assertThat(fundFreezeMapper.selectCount(null)).isZero();
+        assertThat(fundMovementRecordMapper.selectCount(null)).isZero();
+        assertThat(idempotencyRecordMapper.selectCount(null)).isZero();
+    }
+
+    @Test
+    void shouldReplaySequentialStandaloneFreezeOnlyOnceAndRejectChangedRequest() {
+        Long owner = createUser("standalone_freeze_idem_owner");
+        Long accountId = createAccount(owner);
+        rechargeService.recharge(owner, accountId, money("1000.00"));
+        FreezeRequest request = new FreezeRequest(money("300.00"), "TRADE", "Same request");
+
+        FreezeResponse first = freezeService.freeze(owner, accountId, "freeze-idem-key", request);
+        FreezeResponse replay = freezeService.freeze(owner, accountId, "freeze-idem-key", request);
+
+        assertThat(replay.freezeId()).isEqualTo(first.freezeId());
+        assertThat(replay.freezeNo()).isEqualTo(first.freezeNo());
+        assertThat(replay.amount()).isEqualByComparingTo(first.amount());
+        assertThat(replay.availableBalance()).isEqualByComparingTo(first.availableBalance());
+        assertThat(replay.frozenBalance()).isEqualByComparingTo(first.frozenBalance());
+        assertThat(availableBalance(accountId)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(accountId)).isEqualByComparingTo("300.00");
+        assertThat(fundFreezeMapper.selectCount(null)).isEqualTo(1);
+        assertThat(idempotencyRecordMapper.selectCount(null)).isEqualTo(1);
+        assertThatThrownBy(() -> freezeService.freeze(
+                owner,
+                accountId,
+                "freeze-idem-key",
+                new FreezeRequest(money("301.00"), "TRADE", "Same request")
+        )).isInstanceOf(IdempotencyConflictException.class);
+    }
+
+    @Test
+    void shouldExecuteConcurrentDuplicateStandaloneFreezeOnlyOnce() throws Exception {
+        Long owner = createUser("standalone_freeze_concurrent_idem_owner");
+        Long accountId = createAccount(owner);
+        rechargeService.recharge(owner, accountId, money("1000.00"));
+
+        List<FreezeAttempt> attempts = runConcurrently(
+                () -> freezeAttempt(owner, accountId, "freeze-same-key", "300.00"),
+                () -> freezeAttempt(owner, accountId, "freeze-same-key", "300.00")
+        );
+
+        assertThat(attempts).allMatch(FreezeAttempt::successful);
+        assertThat(attempts.get(0).response().freezeId())
+                .isEqualTo(attempts.get(1).response().freezeId());
+        assertThat(availableBalance(accountId)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(accountId)).isEqualByComparingTo("300.00");
+        assertThat(fundFreezeMapper.selectCount(null)).isEqualTo(1);
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(1);
+        assertThat(idempotencyRecordMapper.selectCount(null)).isEqualTo(1);
+    }
+
+    @Test
+    void shouldEnforceFundFreezeDatabaseConstraints() {
+        Long owner = createUser("standalone_freeze_constraint_owner");
+        Long accountId = createAccount(owner);
+        String insert = """
+                INSERT INTO fund_freeze
+                    (freeze_no, user_id, account_id, amount, status, business_type, remark)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """;
+
+        assertThat(jdbcTemplate.update(
+                insert, "FRZ-CONSTRAINT-1", owner, accountId, money("1.00"), "FROZEN", "TRADE", "ok"
+        )).isEqualTo(1);
+        FundFreezeEntity stored = fundFreezeMapper.selectList(null).get(0);
+        assertThat(stored.getUserId()).isEqualTo(owner);
+        assertThat(stored.getAccountId()).isEqualTo(accountId);
+        assertThat(stored.getCreatedAt()).isNotNull();
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                insert, "FRZ-CONSTRAINT-1", owner, accountId, money("2.00"), "FROZEN", "TRADE", null
+        )).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                insert, "FRZ-CONSTRAINT-2", owner, accountId, money("0.00"), "FROZEN", "TRADE", null
+        )).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                insert, "FRZ-CONSTRAINT-3", owner, accountId, money("1.00"), "SETTLED", "TRADE", null
+        )).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                insert, "FRZ-CONSTRAINT-4", owner, accountId, money("1.00"), "FROZEN", "trade", null
+        )).isInstanceOf(DataAccessException.class);
+        assertThat(fundFreezeMapper.selectCount(null)).isEqualTo(1);
+    }
+
     private static MySQLContainer mysqlContainer() {
         MySQLContainer container = new MySQLContainer("mysql:8.4.11");
         container.withDatabaseName("finledger_test");
@@ -602,7 +814,8 @@ class FinancialFlowIntegrationTest {
         container.withInitScripts(
                 "database/schema/V1__create_core_tables.sql",
                 "database/schema/V2__add_settlement_and_risk.sql",
-                "database/schema/V3__remove_redundant_account_balance.sql"
+                "database/schema/V3__remove_redundant_account_balance.sql",
+                "database/schema/V4__add_fund_freeze.sql"
         );
         container.withCommand("--log-bin-trust-function-creators=1");
         container.withStartupTimeout(Duration.ofMinutes(2));
@@ -672,6 +885,20 @@ class FinancialFlowIntegrationTest {
         }
     }
 
+    private FreezeAttempt freezeAttempt(Long owner, Long accountId, String key, String amount) {
+        try {
+            FreezeResponse response = freezeService.freeze(
+                    owner,
+                    accountId,
+                    key,
+                    new FreezeRequest(money(amount), "TRADE", "Concurrent freeze")
+            );
+            return new FreezeAttempt(response, null);
+        } catch (RuntimeException exception) {
+            return new FreezeAttempt(null, exception);
+        }
+    }
+
     private <T> List<T> runConcurrently(
             Callable<T> first,
             Callable<T> second
@@ -721,8 +948,18 @@ class FinancialFlowIntegrationTest {
                 """);
     }
 
-    private void dropFailureTrigger() {
+    private void createFreezeFailureTrigger() {
+        jdbcTemplate.execute("""
+                CREATE TRIGGER fail_fund_freeze_insert
+                BEFORE INSERT ON fund_freeze
+                FOR EACH ROW
+                SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced freeze record failure'
+                """);
+    }
+
+    private void dropFailureTriggers() {
         jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + FAILURE_TRIGGER);
+        jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + FREEZE_FAILURE_TRIGGER);
     }
 
     private record Attempt(TransferResponse response, RuntimeException failure) {
@@ -732,5 +969,11 @@ class FinancialFlowIntegrationTest {
     }
 
     private record LifecycleAttempt(boolean successful, RuntimeException failure) {
+    }
+
+    private record FreezeAttempt(FreezeResponse response, RuntimeException failure) {
+        boolean successful() {
+            return response != null;
+        }
     }
 }
