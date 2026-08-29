@@ -685,6 +685,39 @@ class FinancialFlowIntegrationTest {
     }
 
     @Test
+    void shouldExplainRejectedTransactionWithoutChangingFunds() {
+        Long owner = createUser("ai_rejected_owner");
+        Long receiver = createUser("ai_rejected_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("60000.00"));
+
+        RiskRejectedException rejected = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> pendingTransferService.createPending(
+                        owner, new TransferRequest(from, to, money("50000.00"))
+                ),
+                RiskRejectedException.class
+        );
+        assertThat(rejected).isNotNull();
+
+        var explanation = aiRiskExplanationService.explain(
+                owner, "交易 " + rejected.getTransactionNo() + " 为什么被拒绝？"
+        );
+
+        assertThat(explanation.intent()).isEqualTo(TransactionExplanationType.EXPLAIN_RISK);
+        assertThat(explanation.status()).isEqualTo("FAILED");
+        assertThat(explanation.riskDecision()).isEqualTo("REJECT");
+        assertThat(explanation.riskEvents()).anySatisfy(event -> {
+            assertThat(event.ruleCode()).isEqualTo("HIGH_AMOUNT");
+            assertThat(event.decision()).isEqualTo("REJECT");
+            assertThat(event.reason()).contains("reject threshold");
+        });
+        assertThat(availableBalance(from)).isEqualByComparingTo("60000.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
+    }
+
+    @Test
     void shouldRechargeAvailableBalanceWithoutChangingFrozenBalance() {
         Long owner = createUser("dual_recharge_owner");
         Long accountId = createAccount(owner);
