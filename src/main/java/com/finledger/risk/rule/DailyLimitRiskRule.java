@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Component
 public class DailyLimitRiskRule implements RiskRule {
@@ -34,6 +35,11 @@ public class DailyLimitRiskRule implements RiskRule {
     }
 
     @Override
+    public String name() {
+        return "Daily outgoing limit";
+    }
+
+    @Override
     public RiskPhase phase() {
         return RiskPhase.IN_TRANSACTION;
     }
@@ -44,15 +50,33 @@ public class DailyLimitRiskRule implements RiskRule {
         LocalDateTime to = from.plusDays(1);
         BigDecimal accepted = transferOrderMapper.sumAcceptedOutgoing(context.userId(), from, to);
         BigDecimal projected = accepted.add(context.amount());
-        if (projected.compareTo(properties.getDailyLimit()) <= 0) {
-            return RiskEvaluation.pass(CODE);
+        BigDecimal reviewThreshold = properties.getDailyReviewThreshold();
+        BigDecimal rejectThreshold = properties.getDailyRejectThreshold();
+        Map<String, Object> metadata = Map.of(
+                "acceptedAmount", accepted,
+                "currentAmount", context.amount(),
+                "projectedAmount", projected,
+                "reviewThreshold", reviewThreshold,
+                "rejectThreshold", rejectThreshold,
+                "windowStartUtc", from.toString(),
+                "windowEndUtcExclusive", to.toString()
+        );
+        if (projected.compareTo(reviewThreshold) < 0) {
+            return RiskEvaluation.pass(CODE, name(), metadata);
+        }
+        if (projected.compareTo(rejectThreshold) <= 0) {
+            return new RiskEvaluation(
+                    CODE, name(), RiskLevel.MEDIUM, RiskDecision.REVIEW,
+                    "Projected daily outgoing amount " + projected.toPlainString()
+                            + " reached review threshold " + reviewThreshold.toPlainString(),
+                    metadata
+            );
         }
         return new RiskEvaluation(
-                CODE,
-                RiskLevel.HIGH,
-                RiskDecision.REJECT,
+                CODE, name(), RiskLevel.HIGH, RiskDecision.REJECT,
                 "Projected daily outgoing amount " + projected.toPlainString()
-                        + " exceeds configured limit " + properties.getDailyLimit().toPlainString()
+                        + " exceeded reject threshold " + rejectThreshold.toPlainString(),
+                metadata
         );
     }
 }

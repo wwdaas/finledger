@@ -21,7 +21,12 @@ import com.finledger.ledger.mapper.TransactionRecordMapper;
 import com.finledger.recharge.service.RechargeService;
 import com.finledger.risk.exception.RiskRejectedException;
 import com.finledger.risk.mapper.RiskEventMapper;
+import com.finledger.risk.model.RiskAssessment;
+import com.finledger.risk.model.RiskDecision;
+import com.finledger.risk.model.RiskEvaluation;
+import com.finledger.risk.model.RiskLevel;
 import com.finledger.risk.service.RiskEventQueryService;
+import com.finledger.risk.service.RiskEventRecorder;
 import com.finledger.account.exception.InsufficientAvailableBalanceException;
 import com.finledger.settlement.mapper.FundMovementRecordMapper;
 import com.finledger.settlement.service.PendingTransferService;
@@ -56,6 +61,7 @@ import org.testcontainers.mysql.MySQLContainer;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -107,6 +113,7 @@ class FinancialFlowIntegrationTest {
     @Autowired private CancellationService cancellationService;
     @Autowired private DeferredTransferQueryService deferredTransferQueryService;
     @Autowired private RiskEventQueryService riskEventQueryService;
+    @Autowired private RiskEventRecorder riskEventRecorder;
     @Autowired private AiTransactionAssistantService aiAssistantService;
     @Autowired private AiRiskExplanationService aiRiskExplanationService;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -533,7 +540,7 @@ class FinancialFlowIntegrationTest {
         rechargeService.recharge(owner, from, money("60000.00"));
 
         var pending = pendingTransferService.createPending(
-                owner, new TransferRequest(from, to, money("50000.01"))
+                owner, new TransferRequest(from, to, money("10000.00"))
         );
 
         assertThat(pending.status()).isEqualTo("PENDING");
@@ -546,27 +553,84 @@ class FinancialFlowIntegrationTest {
     }
 
     @Test
+    void shouldPersistRiskMetadataIdempotentlyAndFilterOnlyOwnedEvents() throws Exception {
+        Long owner = createUser("risk_query_owner");
+        Long stranger = createUser("risk_query_stranger");
+        Long receiver = createUser("risk_query_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("20000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("10000.00"))
+        );
+
+        var stored = riskEventQueryService.findByBusinessNo(owner, pending.transferNo());
+        assertThat(stored).singleElement().satisfies(event -> {
+            assertThat(event.transactionId()).isEqualTo(pending.transferId());
+            assertThat(event.amount()).isEqualByComparingTo("10000.00");
+            assertThat(event.metadata()).containsEntry("ruleName", "High amount transaction")
+                    .containsKeys("reviewThreshold", "rejectThreshold");
+        });
+
+        RiskEvaluation duplicateEvaluation = new RiskEvaluation(
+                "HIGH_AMOUNT", "High amount transaction", RiskLevel.MEDIUM,
+                RiskDecision.REVIEW, "duplicate replay", Map.of("replayed", true)
+        );
+        riskEventRecorder.record(
+                owner, pending.transferId(), pending.transferNo(), money("10000.00"),
+                new RiskAssessment(RiskDecision.REVIEW, List.of(duplicateEvaluation))
+        );
+        assertThat(riskEventMapper.selectCount(null)).isEqualTo(1);
+
+        var ownerPage = riskEventQueryService.query(
+                owner, pending.transferId(), null, RiskDecision.REVIEW,
+                "HIGH_AMOUNT", 1, 1
+        );
+        assertThat(ownerPage.total()).isEqualTo(1);
+        assertThat(ownerPage.items()).hasSize(1);
+        assertThat(riskEventQueryService.query(
+                stranger, pending.transferId(), null, RiskDecision.REVIEW,
+                "HIGH_AMOUNT", 1, 20
+        ).items()).isEmpty();
+
+        mockMvc.perform(get("/api/risk-events")
+                        .param("transactionId", pending.transferId().toString())
+                        .param("decision", "REVIEW")
+                        .param("ruleCode", "HIGH_AMOUNT")
+                        .param("page", "1")
+                        .param("size", "1")
+                        .with(jwt().jwt(token -> token.subject(owner.toString()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].transactionId").value(pending.transferId()))
+                .andExpect(jsonPath("$.items[0].metadata.ruleName")
+                        .value("High amount transaction"));
+    }
+
+    @Test
     void shouldPersistDailyLimitRejectionWithoutFreezingMoreFunds() {
         Long owner = createUser("risk_daily_owner");
         Long receiver = createUser("risk_daily_receiver");
         Long from = createAccount(owner);
         Long to = createAccount(receiver);
-        rechargeService.recharge(owner, from, money("250000.00"));
-        pendingTransferService.createPending(
-                owner, new TransferRequest(from, to, money("190000.00"))
-        );
+        rechargeService.recharge(owner, from, money("60000.00"));
+        for (int index = 0; index < 5; index++) {
+            pendingTransferService.createPending(
+                    owner, new TransferRequest(from, to, money("9000.00"))
+            );
+        }
 
         RiskRejectedException rejected = org.assertj.core.api.Assertions.catchThrowableOfType(
                 () -> pendingTransferService.createPending(
-                        owner, new TransferRequest(from, to, money("20000.01"))
+                        owner, new TransferRequest(from, to, money("5000.01"))
                 ),
                 RiskRejectedException.class
         );
 
         assertThat(rejected).isNotNull();
-        assertThat(balance(from)).isEqualByComparingTo("250000.00");
-        assertThat(availableBalance(from)).isEqualByComparingTo("60000.00");
-        assertThat(frozenBalance(from)).isEqualByComparingTo("190000.00");
+        assertThat(balance(from)).isEqualByComparingTo("60000.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("15000.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("45000.00");
         var rejectedOrder = transferOrderMapper.selectList(null).stream()
                 .filter(order -> rejected.getTransactionNo().equals(order.getTransferNo()))
                 .findFirst().orElseThrow();
@@ -575,7 +639,7 @@ class FinancialFlowIntegrationTest {
         assertThat(riskEventQueryService.findByBusinessNo(owner, rejected.getTransactionNo()))
                 .extracting(event -> event.ruleCode())
                 .containsExactly("DAILY_LIMIT");
-        assertThat(riskEventMapper.selectCount(null)).isEqualTo(2);
+        assertThat(riskEventMapper.selectCount(null)).isEqualTo(3);
     }
 
     @Test
@@ -586,7 +650,7 @@ class FinancialFlowIntegrationTest {
         Long to = createAccount(receiver);
         rechargeService.recharge(owner, from, money("60000.00"));
         var pending = pendingTransferService.createPending(
-                owner, new TransferRequest(from, to, money("50000.01"))
+                owner, new TransferRequest(from, to, money("10000.00"))
         );
         String question = "交易 " + pending.transferNo() + " 为什么触发风控？";
 
@@ -891,7 +955,8 @@ class FinancialFlowIntegrationTest {
                 "database/schema/V1__create_core_tables.sql",
                 "database/schema/V2__add_settlement_and_risk.sql",
                 "database/schema/V3__remove_redundant_account_balance.sql",
-                "database/schema/V4__add_fund_freeze.sql"
+                "database/schema/V4__add_fund_freeze.sql",
+                "database/schema/V5__enhance_risk_events.sql"
         );
         container.withCommand("--log-bin-trust-function-creators=1");
         container.withStartupTimeout(Duration.ofMinutes(2));

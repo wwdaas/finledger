@@ -12,6 +12,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
@@ -36,8 +37,10 @@ class AiRiskExplanationServiceTest {
                 LocalDateTime.parse("2026-08-13T12:00:00"), null
         );
         RiskEventResponse event = new RiskEventResponse(
-                9L, TRANSACTION_NO, "HIGH_AMOUNT", "MEDIUM", "REVIEW",
-                "amount exceeds threshold", LocalDateTime.parse("2026-08-13T12:00:00")
+                9L, 7L, TRANSACTION_NO, "HIGH_AMOUNT", "MEDIUM", "REVIEW",
+                new BigDecimal("300.00"), "amount exceeds threshold",
+                Map.of("ruleName", "High amount transaction"),
+                LocalDateTime.parse("2026-08-13T12:00:00")
         );
         when(referenceExtractor.extract("question")).thenReturn(TRANSACTION_NO);
         when(transferQueryService.getOwnedByNo(42L, TRANSACTION_NO)).thenReturn(transaction);

@@ -13,14 +13,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 class HighAmountRiskRuleTest {
 
     @Test
-    void shouldReviewOnlyAmountsAboveConfiguredThreshold() {
+    void shouldApplyPassReviewAndRejectBoundaries() {
         RiskProperties properties = new RiskProperties();
-        properties.setHighAmountThreshold(new BigDecimal("50000.00"));
+        properties.setHighAmountReviewThreshold(new BigDecimal("10000.00"));
+        properties.setHighAmountRejectThreshold(new BigDecimal("50000.00"));
         HighAmountRiskRule rule = new HighAmountRiskRule(properties);
 
-        assertThat(rule.evaluate(context("50000.00")).decision()).isEqualTo(RiskDecision.PASS);
-        assertThat(rule.evaluate(context("50000.01")).decision()).isEqualTo(RiskDecision.REVIEW);
-        assertThat(rule.evaluate(context("50000.01")).ruleCode()).isEqualTo("HIGH_AMOUNT");
+        assertThat(rule.evaluate(context("9999.99")).decision()).isEqualTo(RiskDecision.PASS);
+        assertThat(rule.evaluate(context("10000.00")).decision()).isEqualTo(RiskDecision.REVIEW);
+        assertThat(rule.evaluate(context("49999.99")).decision()).isEqualTo(RiskDecision.REVIEW);
+        var rejected = rule.evaluate(context("50000.00"));
+        assertThat(rejected.decision()).isEqualTo(RiskDecision.REJECT);
+        assertThat(rejected.ruleCode()).isEqualTo("HIGH_AMOUNT");
+        assertThat(rejected.ruleName()).isEqualTo("High amount transaction");
+        assertThat(rejected.metadata()).containsKeys("amount", "reviewThreshold", "rejectThreshold");
     }
 
     private RiskContext context(String amount) {
