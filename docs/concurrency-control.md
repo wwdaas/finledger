@@ -1,5 +1,8 @@
 # Concurrency control (Phase 8)
 
+> This historical note is retained for old links. The current Chinese design and test evidence are in
+> [concurrency.md](concurrency.md).
+
 ## Project choice
 
 FinLedger uses pessimistic row locks for the primary transfer implementation:

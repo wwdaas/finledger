@@ -187,9 +187,9 @@ sequenceDiagram
     participant X as Settlement / Cancellation
 
     C->>P: 创建待处理交易
-    P->>R: 请求型规则（大额 / Redis 高频）
+    P->>R: 事务前规则（Redis 高频）
     P->>D: 锁用户、按 ID 锁账户
-    D->>R: 事实型规则（自然日限额）
+    D->>R: 事务内规则（大额 / 自然日限额）
     R->>D: 保存 risk_event
     D->>D: 冻结资金 + PENDING + movement
     C->>X: SETTLE 或 CANCEL
@@ -199,7 +199,7 @@ sequenceDiagram
 
 SETTLE 与 CANCEL 对同一订单竞争行锁。获胜事务提交终态后，另一个事务看到最新状态并失败；
 条件 UPDATE 再防止陈旧状态覆盖。详细不变量见 [settlement.md](settlement.md)，风险阶段取舍见
-[risk-control.md](risk-control.md)。
+[risk.md](risk.md)。
 
 ## AI 安全边界
 
@@ -214,9 +214,12 @@ flowchart LR
     E --> A[只读回答]
 ```
 
-交易状态解释先提取 `transactionNo`，Java 再按 JWT userId 查询本人 DEFERRED 订单及
-`risk_event`；知道其他人的交易号也只会得到 not found。LLM 不接收 JDBC 连接，不生成可执行 SQL，也没有充值、冻结、清算或转账工具。即使模型输出越界参数，
-Java 仍会把意图限制在固定枚举、最多 10 条和合法金额范围；最终数据查询始终绑定 JWT 用户。
+单笔交易解释先把问题映射为 `QUERY_TRANSACTION_STATUS`、`EXPLAIN_TRANSACTION` 或
+`EXPLAIN_RISK`，再提取 `transactionNo`。Java 按 JWT userId 查询本人 DEFERRED 订单及
+`risk_event`；知道其他人的交易号也只会得到 not found。LLM 不接收 JDBC 连接，不生成可执行
+SQL，也没有充值、冻结、清算或转账工具。分析查询的模型输出还会被限制在固定枚举、最多 10 条
+和合法金额范围；最终数据查询始终绑定 JWT 用户。AI 关闭或解释模型失败时，Java 模板直接返回
+基础说明，不影响交易系统。
 
 ## 部署视图
 

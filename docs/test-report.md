@@ -5,15 +5,15 @@
 
 ## 回归结论
 
-`./mvnw clean verify` 构建成功，共执行 91 个测试：
+`./mvnw clean verify` 构建成功，共执行 92 个测试：
 
 | 类型 | 数量 | 结果 |
 | --- | ---: | --- |
 | 单元测试与 MockMvc Web/Security 测试 | 56 | 全部通过 |
-| MySQL Testcontainers 集成测试 | 35 | 全部通过 |
-| 合计 | 91 | 0 失败、0 错误、0 跳过 |
+| MySQL Testcontainers 集成测试 | 36 | 全部通过 |
+| 合计 | 92 | 0 失败、0 错误、0 跳过 |
 
-集成测试中，`FinancialFlowIntegrationTest` 有 34 个场景，另有 1 个真实迁移测试。
+集成测试中，`FinancialFlowIntegrationTest` 有 35 个场景，另有 1 个真实迁移测试。
 测试使用 MySQL 8.4.11，不使用 H2 代替事务、行锁、唯一约束和 CHECK 约束行为。
 
 ## 核心回归范围

@@ -3,28 +3,23 @@
 FinLedger 是一个用于 Java 后端学习、校招面试和工程能力展示的模块化单体项目。它模拟
 用户、资金账户、充值、转账和交易流水，但不连接银行、银行卡或支付渠道，也不处理真实资金。
 
-项目重点不是页面数量，而是把一次资金变更做正确：数据库事务、并发锁、幂等、金额精度、
-鉴权、审计流水、自动化测试和受控 AI 集成。
+项目重点不是页面数量，而是把一次资金变更做正确：数据库事务、并发锁、状态机、幂等、
+可解释风控、审计流水和受控 AI 集成。它不连接真实银行、银行卡、支付渠道或券商核心，
+也不处理真实资金。
 
 ## 当前完成度
 
-Phase 0—17 已完成，核心能力包括：
+核心增强已完成并可运行：
 
-- 同源响应式 Web 工作台，覆盖注册、登录、账户、充值、转账、流水与 AI 查询；
-- 用户注册、BCrypt 密码存储、登录和 HS256 JWT 鉴权；
-- 模拟资金账户创建、归属校验、余额查询和模拟充值；
-- 数据库仅保存 `availableBalance` / `frozenBalance`，`totalBalance` 由两者计算；
-- 独立资金冻结 API，以账户行锁、条件更新和数据库幂等保证并发安全；
-- `PENDING → SETTLED / CANCELLED` 交易状态机与并发状态竞争保护；
-- `@Transactional` 原子转账、余额校验和双边交易流水；
-- `SELECT ... FOR UPDATE` 悲观锁及固定账户 ID 加锁顺序；
-- `Idempotency-Key`、请求摘要、MySQL 唯一约束和响应回放；
-- Redis Lua 固定窗口限流，Redis 故障时不影响 MySQL 核心一致性；
-- Strategy 风控规则（大额、高频、自然日累计限额）及持久化风险事件；
-- 统一业务异常、参数异常、401/403 和安全错误响应；
-- JUnit 5、Mockito、Spring MVC、Testcontainers + MySQL 8 测试；
-- 多阶段 Docker 镜像、非 root 运行、Compose 健康检查和 GitHub Actions；
-- 只读 AI 交易分析与风控解释助手，模型不能访问数据库、执行 SQL 或修改余额。
+- JWT Authentication + 账户/交易/风控事件的用户级权限隔离；
+- Double Balance Model：`availableBalance` / `frozenBalance`，逻辑总额由两者计算；
+- Fund Freeze、Settlement、Cancellation 与 `PENDING → SETTLED/CANCELLED` 状态机；
+- `@Transactional`、MySQL `SELECT ... FOR UPDATE`、固定账户 ID 加锁顺序；
+- `Idempotency-Key`、SHA-256 请求摘要、数据库唯一约束与结果回放；
+- Strategy Risk Engine：大额、高频、UTC 自然日累计规则与 Risk Event 审计；
+- 只读 AI 交易/风控解释，JWT 校验在 Java 内完成，LLM 无 SQL 和资金写能力；
+- 92 个 JUnit/MockMvc/Testcontainers 测试，覆盖回滚、超扣、重复提交和终态竞争；
+- Docker Compose、多阶段非 root 镜像、健康检查和 GitHub Actions。
 
 ## 技术栈
 
@@ -128,8 +123,9 @@ PENDING
 
 ## 数据模型
 
-V1 从五张核心表起步；V2 以增量迁移引入双余额、资金变动和风控审计，V3 在完成
-旧余额回填后移除冗余 `balance` 列，V4 增加独立冻结业务记录。当前共八张表：
+V1 从五张核心表起步；V2 引入双余额、资金变动和风控审计，V3 在完成旧余额回填后
+移除冗余 `balance` 列，V4 增加独立冻结业务记录，V5 增强风险事件金额、JSON 元数据与索引。
+当前共八张表：
 
 | 表 | 用途 | 关键约束 |
 | --- | --- | --- |
@@ -140,7 +136,7 @@ V1 从五张核心表起步；V2 以增量迁移引入双余额、资金变动�
 | `idempotency_record` | 请求执行权和结果 | `(user_id, business_type, key)` 唯一 |
 | `fund_freeze` | 独立冻结业务事实 | 冻结号唯一、金额为正、账户和用户外键 |
 | `fund_movement_record` | 冻结、清算、解冻的资金快照 | 业务/账户/动作唯一、前后值可核对 |
-| `risk_event` | 每条命中规则的可追溯判断 | 业务/规则唯一、绑定用户与订单 |
+| `risk_event` | 每条命中规则的可追溯判断 | 业务/规则唯一、金额、JSON 元数据、用户与订单外键 |
 
 `account.available_balance + account.frozen_balance` 是当前总资金；`transaction_record`
 用于历史、审计和对账。账户快照与不可变流水用途不同，不能只保存其中一个。完整 DDL 和取舍见
@@ -210,6 +206,9 @@ Content-Type: application/json
 流水查询支持 `accountId`、`businessType`、`direction`、`from`、`to`、`page` 和 `size`
 参数，分页从 1 开始，单页最多 100 条。
 
+风险事件查询支持 `transactionId`、`businessNo`、`decision`、`ruleCode`、`page` 和 `size`，
+服务端始终附加 JWT 用户 ID 条件。
+
 ## 本地启动
 
 需要 JDK 17 和 Docker Desktop。首次配置：
@@ -226,7 +225,7 @@ docker compose up -d mysql redis
 docker compose ps
 ```
 
-DDL 会在全新 MySQL 数据卷首次初始化时按 V1、V2、V3、V4 顺序自动执行。Docker 的初始化目录
+DDL 会在全新 MySQL 数据卷首次初始化时按 V1、V2、V3、V4、V5 顺序自动执行。Docker 的初始化目录
 不会对已有数据卷重复执行脚本；已有数据库需按
 [database-design.md](docs/database-design.md) 先备份、检查，再按当前版本依次应用缺失迁移。
 
@@ -286,7 +285,7 @@ curl http://localhost:8080/api/accounts \
 ./mvnw test
 ```
 
-当前套件共 82 个测试，覆盖：
+当前套件共 92 个测试（56 个单元/MockMvc 测试、36 个 MySQL 集成测试），覆盖：
 
 - 正常转账和双边流水；
 - V1 旧账户余额无损迁移为 available/frozen，且最终移除冗余 `balance` 列；
@@ -304,8 +303,9 @@ curl http://localhost:8080/api/accounts \
 - AI 只查询 JWT 用户自己的交易数据；
 - 冻结余额不足、正常清算、撤销、重复终态操作；
 - 两线程并发清算/撤销同一订单时只能一个成功且资金守恒；
-- HIGH_AMOUNT、HIGH_FREQUENCY、DAILY_LIMIT 与风险事件落库；
-- AI 只能解释当前 JWT 用户自己的交易和风险记录。
+- HIGH_AMOUNT、HIGH_FREQUENCY、DAILY_LIMIT 的 PASS/REVIEW/REJECT 精确边界；
+- 风险事件唯一约束、JSON 元数据、组合筛选、分页与跨用户隔离；
+- AI 三种受控解释意图、REVIEW/REJECT 原因、跨用户隔离和模型故障 fallback。
 
 集成测试会启动一次性 MySQL 8.4 容器，执行正式 DDL，不读写本机开发库。详细策略见
 [testing-strategy.md](docs/testing-strategy.md)。
@@ -323,14 +323,15 @@ curl http://localhost:8080/api/accounts \
 
 ## 风控边界
 
-- `HIGH_AMOUNT`：单笔超过配置阈值，结果 `REVIEW`，允许进入 PENDING；
-- `HIGH_FREQUENCY`：Redis Lua 统计短窗口频率，命中为 `REVIEW`；Redis 不可用时 fail-open，
-  只降低辅助风控能力，不破坏资金一致性；
-- `DAILY_LIMIT`：基于 MySQL 已接受订单计算 UTC 自然日累计，超过阈值为 `REJECT`，不冻结资金；
+- `HIGH_AMOUNT`：默认 `< 10,000 PASS`、`10,000—<50,000 REVIEW`、`≥50,000 REJECT`；
+- `HIGH_FREQUENCY`：同一用户 60 秒内默认 `≤5 PASS`、`6—10 REVIEW`、`>10 REJECT`；
+  Redis 不可用时 fail-open，只降低辅助信号，不破坏 MySQL 资金一致性；
+- `DAILY_LIMIT`：基于 MySQL 已接受订单计算 UTC 自然日累计，默认 `<30,000 PASS`、
+  `30,000—50,000 REVIEW`、`>50,000 REJECT`；
 - `risk_event` 与订单决策共同保存，AI 只能解释已产生的结论。
 
 规则阈值和总开关由 `finledger.risk.*` 配置管理，设计取舍见
-[risk-control.md](docs/risk-control.md)。
+[risk.md](docs/risk.md)。这些数值只是可配置的项目演示阈值，不代表真实金融机构规则。
 
 ## 关键设计结论
 
@@ -351,27 +352,31 @@ curl http://localhost:8080/api/accounts \
 - “上个月最大的五笔支出是什么？”
 - “最近有没有超过 1000 元的大额交易？”
 - “交易 TF0123456789ABCDEF01234567 为什么触发风控？”
+- “交易 TF0123456789ABCDEF01234567 当前是什么状态？”
 
-启用外部模型后，模型只负责把问题映射为严格 JSON Schema 意图，以及解释 Java 已授权的
-结构化结果。用户 ID 始终来自 JWT；查询 SQL 预先写在 Mapper 中并强制带 `user_id`；模型
-没有数据库连接、SQL 工具、充值工具或转账工具。详情见
-[ai-assistant.md](docs/ai-assistant.md)。
+交易分析在启用外部模型时使用严格 JSON Schema；单笔交易解释先由规则解析器产生三种受控
+意图，再由 Java 校验交易归属。用户 ID 始终来自 JWT；查询 SQL 预先写在 Mapper 中并强制
+带 `user_id`；模型没有数据库连接、SQL 工具、充值工具或转账工具。模型不可用时解释链路
+自动回退到 Java 模板。详情见 [ai.md](docs/ai.md)。
 
 ## 项目文档
 
 - [架构与核心时序](docs/architecture.md)
 - [数据库设计](docs/database-design.md)
-- [并发控制](docs/concurrency-control.md)
+- [完整交易流程](docs/transaction-flow.md)
+- [并发控制](docs/concurrency.md)
 - [冻结、清算与状态机](docs/settlement.md)
-- [风控规则与事务边界](docs/risk-control.md)
+- [风控规则与事务边界](docs/risk.md)
 - [转账幂等](docs/idempotency.md)
 - [JWT 认证](docs/authentication.md)
 - [Redis 使用边界](docs/redis-boundaries.md)
 - [统一异常响应](docs/error-handling.md)
 - [测试策略](docs/testing-strategy.md)
+- [Phase 14 测试报告](docs/test-report.md)
 - [Docker 与工程化](docs/docker.md)
-- [AI 交易分析助手](docs/ai-assistant.md)
+- [AI 交易分析助手](docs/ai.md)
 - [面试与简历讲解](docs/interview-guide.md)
+- [简历项目摘要](docs/resume-summary.md)
 
 ## Git 阶段记录
 

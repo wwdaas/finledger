@@ -189,6 +189,36 @@ Freeze 是单账户内部 `available → frozen` 的资金状态迁移，前后�
 线程通过 CountDownLatch 同时起跑，各使用不同幂等 key 冻结 80，断言恰好一个成功并核对数据库
 余额、冻结记录和 movement 数量。另一个并发测试用相同 key，证明数据库唯一约束只执行一次。
 
+### 31. 三条风控规则如何聚合？
+
+每条规则只返回 RiskEvaluation，不直接改资金。RiskEngine 按 `PASS < REVIEW < REJECT` 取最严格
+决策，并保留全部非 PASS 结果用于 risk_event。比如一条规则 REVIEW、另一条 REJECT，订单最终
+必须是 REJECT，不能因执行顺序不同而降低风险等级。
+
+### 32. 日限额如何避免跨日和并发统计错误？
+
+项目使用 UTC 自然日左闭右开区间 `[00:00, next 00:00)`，只统计已接受状态。事务内先锁同一
+用户行，再查询累计和接受新订单，使该用户并发请求串行完成判断。固定 UTC 是项目约定，真实
+业务还需按机构时区、节假日和账务日定义。
+
+### 33. risk_event 为什么需要唯一约束和 metadata_json？
+
+`(business_no, rule_code)` 唯一约束防止重试或并发重复记录同一规则；metadata_json 保存阈值、
+计数、累计和时间窗口，让审计与 AI 解释有结构化依据。唯一约束是最终仲裁者，Java 捕获重复键
+只能作为友好幂等处理。
+
+### 34. AI 服务失败时为什么不影响交易？
+
+交易 Service 不依赖 AI Bean 或模型结果。解释链路启用 provider 时由 resilient wrapper 调用，
+超时或异常会回退到确定性 Java 模板。风控决策早已由 Java 规则写入 MySQL，模型既不能改变结论，
+也不在资金事务调用链中。
+
+### 35. Testcontainers 相比 H2 的价值是什么？
+
+H2 无法可靠复现 MySQL 的 `SELECT ... FOR UPDATE`、InnoDB 锁等待、死锁、JSON、CHECK、触发器和
+唯一约束异常行为。Testcontainers 直接运行 MySQL 8.4 与正式 DDL，因此并发与回滚断言更接近
+实际数据库语义，代价是测试启动稍慢并依赖 Docker。
+
 ## 代码讲解路线
 
 面试现场可以按以下顺序打开代码：
@@ -201,9 +231,9 @@ Freeze 是单账户内部 `available → frozen` 的资金状态迁移，前后�
 6. `FinancialFlowIntegrationTest`：用真实数据库测试证明设计；
 7. `PendingTransferExecutor` / `SettlementService`：展示双余额与状态竞争；
 8. `FreezeExecutor`：展示独立冻结事务、单账户行锁和双重余额保护；
-9. `V4__add_fund_freeze.sql`：展示业务记录、约束和既有幂等扩展；
+9. `V4__add_fund_freeze.sql` / `V5__enhance_risk_events.sql`：展示增量约束与审计演进；
 10. `RiskEngine` 与三条 `RiskRule`：展示策略聚合和事务阶段；
-11. `AiRiskExplanationService`：解释 LLM 与核心系统之间的权限边界。
+11. `AiRiskExplanationService` / `ResilientRiskExplanationGenerator`：解释权限边界与 fallback。
 
 不要只背注解作用。重点说明每个设计在防止什么具体失败，以及测试如何证明它。
 
@@ -226,13 +256,16 @@ Freeze 是单账户内部 `available → frozen` 的资金状态迁移，前后�
 - 基于 Strategy 模式实现大额、高频、自然日累计限额三类风控规则，统一聚合
   PASS/REVIEW/REJECT，并持久化可追溯 Risk Event；
 - 构建只读 AI 交易分析流水线，以严格结构化意图、Java 参数校验、JWT 数据隔离和预定义 SQL
-  防止模型越权或直接操作资金，并支持解释本人交易状态和既有风控结果。
+  防止模型越权或直接操作资金，支持三种本人交易解释意图与 provider 故障 fallback；
+- 建立 92 项 JUnit 5、Mockito、MockMvc 与 MySQL 8 Testcontainers 测试，其中 36 项真实数据库
+  集成场景覆盖事务故障注入、并发超扣、幂等竞争、状态竞争和风控审计。
 
 不应声称：连接真实银行、支持真实支付清算、达到生产金融合规、彻底消除死锁，或外部模型已经
-在无 API key 的环境中完成线上调用。
+在无 API key 的环境中完成线上调用，也不应声称做过未执行的 TPS/QPS 压测。
 
 ## 是否已经可以写入简历
 
 可以。核心转账、并发、回滚、幂等、权限和容器化测试都已有可运行实现，不再只是表结构或接口
 骨架。投递前应亲自完成一次从启动到演示，并能不看稿解释上述 12 个问题。简历价值主要来自
-一致性设计和验证证据，而不是技术名词数量。
+一致性设计和验证证据，而不是技术名词数量。可直接复用的精简版本见
+[resume-summary.md](resume-summary.md)。

@@ -6,7 +6,7 @@
 - Spring MVC 测试：验证状态码、JWT 入口和统一错误结构；
 - Testcontainers + MySQL 8.4：验证真实 InnoDB 事务、行锁、唯一约束和触发器故障回滚。
 
-`FinancialFlowIntegrationTest` 使用一次性 MySQL 容器依次执行正式 V1、V2、V3、V4 脚本，覆盖正常转账、
+`FinancialFlowIntegrationTest` 使用一次性 MySQL 容器依次执行正式 V1、V2、V3、V4、V5 脚本，覆盖正常转账、
 余额不足、非法金额、账户不存在、流水写入故障回滚、并发超扣、并发重复幂等 key、
 认证和账户权限。并发用两个真实线程同时释放起跑闩锁，不用串行调用模拟竞争。
 
@@ -14,8 +14,9 @@
 撤销、重复清算/取消失败，以及同一 PENDING 订单被两个线程同时清算和撤销时恰好一个成功。
 最终断言不只检查状态，还核对冻结额归零、来源和目标总资金守恒、资金变动与双边流水数量。
 
-风控单元测试分别验证 HIGH_AMOUNT、HIGH_FREQUENCY（含 Redis 故障降级）和 DAILY_LIMIT；
-集成测试验证 REVIEW/REJECT 订单与 risk_event 同步落库、日限额拒绝不新增冻结额。
+风控单元测试分别验证 HIGH_AMOUNT、HIGH_FREQUENCY（含 Redis 故障降级）和 DAILY_LIMIT 的
+PASS/REVIEW/REJECT 精确边界；集成测试验证 REVIEW/REJECT 订单与 risk_event 同步落库、
+JSON 元数据、唯一约束、筛选分页、用户隔离，以及日限额拒绝不新增冻结额。
 
 `AccountBalanceMigrationIntegrationTest` 先只执行 V1 并写入 `balance = 1000.00` 的旧账户，
 再依次执行 V2、V3，验证最终 `available_balance = 1000.00`、`frozen_balance = 0.00` 且旧列已
@@ -27,12 +28,14 @@
 记录和资金变化记录。Testcontainers 另外验证两个不同 key 并发冻结 80 最多一个成功、同 key
 并发只执行一次、顺序重试响应回放、同 key 参数冲突、触发器故障整体回滚，以及 freeze_no、
 amount、status、business_type 的数据库约束。Mockito 验证锁后校验、条件更新和写记录的调用
-关系，Spring MVC 测试验证 JWT 身份和 201 响应。当前完整测试套件共 82 项。
+关系，Spring MVC 测试验证 JWT 身份和 201 响应。当前完整测试套件共 92 项，其中 56 项为
+单元或 MockMvc 测试，36 项为 MySQL Testcontainers 集成测试。
 
 AI 集成测试先完成真实充值和转账，再分别以付款人与收款人的用户 ID 查询统计，证明
 分析服务只返回当前 JWT 用户可见的数据。模型结构化输出转换和只读指令识别由独立单元
-测试覆盖。风控解释测试让付款人查询 HIGH_AMOUNT 事件，再断言收款人使用相同 transactionNo
-得到 not found，证明交易、风险和资金状态没有水平越权。外部 provider 不进入数据库一致性测试。
+测试覆盖。风控解释测试验证 QUERY_TRANSACTION_STATUS、EXPLAIN_TRANSACTION、EXPLAIN_RISK
+三种意图，分别解释 REVIEW 和 REJECT，并断言收款人使用相同 transactionNo 得到 not found；
+模型异常测试验证系统会回退到 Java 确定性说明。外部 provider 不进入数据库一致性测试。
 
 测试配置关闭 Redis 限流，因为这一组测试的目标是数据库一致性；Redis Lua 限流由独立
 单元测试和 Compose 实例验收。生产 MySQL 或开发库不会被集成测试读写。
