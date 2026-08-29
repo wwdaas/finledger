@@ -6,6 +6,7 @@ import com.finledger.account.exception.AccountNotFoundException;
 import com.finledger.account.mapper.AccountMapper;
 import com.finledger.account.service.AccountService;
 import com.finledger.ai.dto.AiAnalysisResponse;
+import com.finledger.ai.model.TransactionExplanationType;
 import com.finledger.ai.service.AiRiskExplanationService;
 import com.finledger.ai.service.AiTransactionAssistantService;
 import com.finledger.common.money.InvalidAmountException;
@@ -50,6 +51,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -73,6 +75,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -643,7 +646,7 @@ class FinancialFlowIntegrationTest {
     }
 
     @Test
-    void shouldExplainOnlyTheAuthenticatedUsersDeferredTransaction() {
+    void shouldExplainOnlyTheAuthenticatedUsersDeferredTransaction() throws Exception {
         Long owner = createUser("ai_risk_owner");
         Long receiver = createUser("ai_risk_receiver");
         Long from = createAccount(owner);
@@ -656,13 +659,29 @@ class FinancialFlowIntegrationTest {
 
         var explanation = aiRiskExplanationService.explain(owner, question);
 
+        assertThat(explanation.intent()).isEqualTo(TransactionExplanationType.EXPLAIN_RISK);
         assertThat(explanation.transactionNo()).isEqualTo(pending.transferNo());
         assertThat(explanation.status()).isEqualTo("PENDING");
         assertThat(explanation.riskDecision()).isEqualTo("REVIEW");
         assertThat(explanation.riskEvents()).extracting(event -> event.ruleCode())
                 .containsExactly("HIGH_AMOUNT");
+        assertThat(aiRiskExplanationService.explain(
+                owner, "交易 " + pending.transferNo() + " 当前状态是什么？"
+        ).intent()).isEqualTo(TransactionExplanationType.QUERY_TRANSACTION_STATUS);
+        assertThat(aiRiskExplanationService.explain(
+                owner, "请解释交易 " + pending.transferNo()
+        ).intent()).isEqualTo(TransactionExplanationType.EXPLAIN_TRANSACTION);
         assertThatThrownBy(() -> aiRiskExplanationService.explain(receiver, question))
                 .isInstanceOf(com.finledger.settlement.exception.TransactionNotFoundException.class);
+        assertThat(availableBalance(from)).isEqualByComparingTo("50000.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("10000.00");
+        assertThat(transferOrderMapper.selectCount(null)).isEqualTo(1);
+        assertThat(riskEventMapper.selectCount(null)).isEqualTo(1);
+
+        mockMvc.perform(post("/api/ai/transactions/explain")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"question\":\"" + question + "\"}"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

@@ -1,19 +1,19 @@
 package com.finledger.ai.service;
 
+import com.finledger.ai.model.TransactionExplanationType;
 import com.finledger.risk.dto.RiskEventResponse;
 import com.finledger.settlement.dto.DeferredTransferResponse;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Component
-@ConditionalOnProperty(name = "finledger.ai.enabled", havingValue = "false", matchIfMissing = true)
 public class DeterministicRiskExplanationGenerator implements TransactionRiskExplanationGenerator {
 
     @Override
     public String explain(
+            TransactionExplanationType intent,
             String question,
             DeferredTransferResponse transaction,
             List<RiskEventResponse> riskEvents
@@ -21,6 +21,16 @@ public class DeterministicRiskExplanationGenerator implements TransactionRiskExp
         String base = "交易 %s 当前状态为 %s，风控结论为 %s。".formatted(
                 transaction.transferNo(), transaction.status(), transaction.riskDecision()
         );
+        if (intent == TransactionExplanationType.QUERY_TRANSACTION_STATUS) {
+            return base;
+        }
+        if (intent == TransactionExplanationType.EXPLAIN_TRANSACTION) {
+            return base + "金额为 %s %s；当前总余额、可用余额、冻结余额分别为 %s、%s、%s。"
+                    .formatted(
+                            transaction.amount(), transaction.currency(), transaction.totalBalance(),
+                            transaction.availableBalance(), transaction.frozenBalance()
+                    );
+        }
         if (riskEvents.isEmpty()) {
             return base + " 当前没有触发需要记录的风控规则。";
         }

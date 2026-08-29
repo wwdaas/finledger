@@ -1,5 +1,7 @@
 package com.finledger.ai.service;
 
+import com.finledger.ai.model.TransactionExplanationIntent;
+import com.finledger.ai.model.TransactionExplanationType;
 import com.finledger.risk.dto.RiskEventResponse;
 import com.finledger.risk.service.RiskEventQueryService;
 import com.finledger.settlement.dto.DeferredTransferResponse;
@@ -23,7 +25,7 @@ class AiRiskExplanationServiceTest {
 
     private static final String TRANSACTION_NO = "TF0123456789ABCDEF01234567";
 
-    @Mock private TransactionReferenceExtractor referenceExtractor;
+    @Mock private TransactionExplanationIntentInterpreter intentInterpreter;
     @Mock private DeferredTransferQueryService transferQueryService;
     @Mock private RiskEventQueryService riskEventQueryService;
     @Mock private TransactionRiskExplanationGenerator explanationGenerator;
@@ -42,18 +44,25 @@ class AiRiskExplanationServiceTest {
                 Map.of("ruleName", "High amount transaction"),
                 LocalDateTime.parse("2026-08-13T12:00:00")
         );
-        when(referenceExtractor.extract("question")).thenReturn(TRANSACTION_NO);
+        when(intentInterpreter.interpret("question")).thenReturn(
+                new TransactionExplanationIntent(
+                        TransactionExplanationType.EXPLAIN_RISK, TRANSACTION_NO
+                )
+        );
         when(transferQueryService.getOwnedByNo(42L, TRANSACTION_NO)).thenReturn(transaction);
         when(riskEventQueryService.findByBusinessNo(42L, TRANSACTION_NO)).thenReturn(List.of(event));
-        when(explanationGenerator.explain("question", transaction, List.of(event)))
+        when(explanationGenerator.explain(
+                TransactionExplanationType.EXPLAIN_RISK, "question", transaction, List.of(event)
+        ))
                 .thenReturn("answer");
         AiRiskExplanationService service = new AiRiskExplanationService(
-                referenceExtractor, transferQueryService, riskEventQueryService, explanationGenerator
+                intentInterpreter, transferQueryService, riskEventQueryService, explanationGenerator
         );
 
         var response = service.explain(42L, "question");
 
         assertThat(response.answer()).isEqualTo("answer");
+        assertThat(response.intent()).isEqualTo(TransactionExplanationType.EXPLAIN_RISK);
         assertThat(response.availableBalance()).isEqualByComparingTo("700.00");
         verify(transferQueryService).getOwnedByNo(42L, TRANSACTION_NO);
         verify(riskEventQueryService).findByBusinessNo(42L, TRANSACTION_NO);
