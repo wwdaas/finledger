@@ -27,7 +27,9 @@ import com.finledger.settlement.mapper.FundMovementRecordMapper;
 import com.finledger.settlement.service.PendingTransferService;
 import com.finledger.settlement.service.SettlementService;
 import com.finledger.settlement.service.CancellationService;
+import com.finledger.settlement.service.DeferredTransferQueryService;
 import com.finledger.settlement.exception.InvalidTransactionStateException;
+import com.finledger.settlement.exception.TransactionNotFoundException;
 import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.dto.TransferResponse;
 import com.finledger.transfer.exception.InsufficientBalanceException;
@@ -76,6 +78,7 @@ class FinancialFlowIntegrationTest {
 
     private static final String FAILURE_TRIGGER = "fail_transfer_record_insert";
     private static final String FREEZE_FAILURE_TRIGGER = "fail_fund_freeze_insert";
+    private static final String UNFREEZE_FAILURE_TRIGGER = "fail_unfreeze_movement_insert";
 
     @Container
     static final MySQLContainer MYSQL = mysqlContainer();
@@ -102,6 +105,7 @@ class FinancialFlowIntegrationTest {
     @Autowired private PendingTransferService pendingTransferService;
     @Autowired private SettlementService settlementService;
     @Autowired private CancellationService cancellationService;
+    @Autowired private DeferredTransferQueryService deferredTransferQueryService;
     @Autowired private RiskEventQueryService riskEventQueryService;
     @Autowired private AiTransactionAssistantService aiAssistantService;
     @Autowired private AiRiskExplanationService aiRiskExplanationService;
@@ -412,6 +416,78 @@ class FinancialFlowIntegrationTest {
         assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
         assertThat(balance(to)).isEqualByComparingTo("300.00");
         assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(2);
+    }
+
+    @Test
+    void shouldRollBackSettlementWhenLedgerWriteFails() {
+        Long owner = createUser("settle_rollback_owner");
+        Long receiver = createUser("settle_rollback_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+        createFailureTrigger();
+
+        assertThatThrownBy(() -> settlementService.settle(owner, pending.transferId()))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(transferOrderMapper.selectById(pending.transferId()).getStatus()).isEqualTo("PENDING");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("300.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
+        assertThat(transactionRecordMapper.selectList(null).stream()
+                .filter(record -> "TRANSFER".equals(record.getBusinessType())))
+                .isEmpty();
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(1);
+    }
+
+    @Test
+    void shouldRollBackCancellationWhenUnfreezeMovementWriteFails() {
+        Long owner = createUser("cancel_rollback_owner");
+        Long receiver = createUser("cancel_rollback_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+        createUnfreezeFailureTrigger();
+
+        assertThatThrownBy(() -> cancellationService.cancel(owner, pending.transferId()))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(transferOrderMapper.selectById(pending.transferId()).getStatus()).isEqualTo("PENDING");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("300.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(1);
+    }
+
+    @Test
+    void shouldHideDeferredTransferAndLifecycleActionsFromOtherUsers() {
+        Long owner = createUser("lifecycle_permission_owner");
+        Long stranger = createUser("lifecycle_permission_stranger");
+        Long receiver = createUser("lifecycle_permission_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+
+        assertThatThrownBy(() -> deferredTransferQueryService.getOwnedById(stranger, pending.transferId()))
+                .isInstanceOf(TransactionNotFoundException.class);
+        assertThatThrownBy(() -> settlementService.settle(stranger, pending.transferId()))
+                .isInstanceOf(TransactionNotFoundException.class);
+        assertThatThrownBy(() -> cancellationService.cancel(stranger, pending.transferId()))
+                .isInstanceOf(TransactionNotFoundException.class);
+
+        assertThat(transferOrderMapper.selectById(pending.transferId()).getStatus()).isEqualTo("PENDING");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("300.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -957,9 +1033,23 @@ class FinancialFlowIntegrationTest {
                 """);
     }
 
+    private void createUnfreezeFailureTrigger() {
+        jdbcTemplate.execute("""
+                CREATE TRIGGER fail_unfreeze_movement_insert
+                BEFORE INSERT ON fund_movement_record
+                FOR EACH ROW
+                BEGIN
+                    IF NEW.action = 'UNFREEZE' THEN
+                        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced unfreeze movement failure';
+                    END IF;
+                END
+                """);
+    }
+
     private void dropFailureTriggers() {
         jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + FAILURE_TRIGGER);
         jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + FREEZE_FAILURE_TRIGGER);
+        jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + UNFREEZE_FAILURE_TRIGGER);
     }
 
     private record Attempt(TransferResponse response, RuntimeException failure) {
