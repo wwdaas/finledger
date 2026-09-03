@@ -14,6 +14,7 @@ Phase 0—17 已完成，核心能力包括：
 - 用户注册、BCrypt 密码存储、登录和 HS256 JWT 鉴权；
 - 模拟资金账户创建、归属校验、余额查询和模拟充值；
 - 数据库仅保存 `availableBalance` / `frozenBalance`，`totalBalance` 由两者计算；
+- 独立资金冻结 API，以账户行锁、条件更新和数据库幂等保证并发安全；
 - `PENDING → SETTLED / CANCELLED` 交易状态机与并发状态竞争保护；
 - `@Transactional` 原子转账、余额校验和双边交易流水；
 - `SELECT ... FOR UPDATE` 悲观锁及固定账户 ID 加锁顺序；
@@ -63,6 +64,7 @@ flowchart LR
 | --- | --- |
 | `user` / `auth` / `security` | 用户、登录、JWT 身份与权限边界 |
 | `account` / `recharge` | 账户状态、所有权、余额和模拟充值 |
+| `freeze` | 独立资金冻结、冻结业务记录与幂等响应回放 |
 | `transfer` | 转账编排、账户更新、订单写入 |
 | `settlement` | 资金冻结、清算、撤销和集中状态机 |
 | `risk` | 可配置规则、统一决策和风险事件审计 |
@@ -127,7 +129,7 @@ PENDING
 ## 数据模型
 
 V1 从五张核心表起步；V2 以增量迁移引入双余额、资金变动和风控审计，V3 在完成
-旧余额回填后移除冗余 `balance` 列。当前共七张表：
+旧余额回填后移除冗余 `balance` 列，V4 增加独立冻结业务记录。当前共八张表：
 
 | 表 | 用途 | 关键约束 |
 | --- | --- | --- |
@@ -136,6 +138,7 @@ V1 从五张核心表起步；V2 以增量迁移引入双余额、资金变动�
 | `transfer_order` | 立即或待处理转账的业务事实 | 状态、风控结论、金额和账户约束 |
 | `transaction_record` | 每次余额变化的不可变流水 | 业务/账户/方向唯一、前后余额可核对 |
 | `idempotency_record` | 请求执行权和结果 | `(user_id, business_type, key)` 唯一 |
+| `fund_freeze` | 独立冻结业务事实 | 冻结号唯一、金额为正、账户和用户外键 |
 | `fund_movement_record` | 冻结、清算、解冻的资金快照 | 业务/账户/动作唯一、前后值可核对 |
 | `risk_event` | 每条命中规则的可追溯判断 | 业务/规则唯一、绑定用户与订单 |
 
@@ -157,6 +160,7 @@ V1 从五张核心表起步；V2 以增量迁移引入双余额、资金变动�
 | `GET` | `/api/accounts` | 查询自己的账户 |
 | `GET` | `/api/accounts/{id}` | 查询自己的单个账户 |
 | `POST` | `/api/accounts/{id}/recharges` | 模拟充值 |
+| `POST` | `/api/accounts/{id}/freezes` | 幂等冻结可用资金，必须带 `Idempotency-Key` |
 | `POST` | `/api/transfers` | 幂等转账，必须带 `Idempotency-Key` |
 | `POST` | `/api/transfers/pending` | 创建待处理交易并冻结来源资金 |
 | `GET` | `/api/transfers/{id}` | 查询本人待处理交易 |
@@ -200,6 +204,9 @@ Content-Type: application/json
 
 相同 key 与相同请求会回放第一次结果；相同 key 配不同转账参数会返回 HTTP 409。
 
+独立冻结的请求格式、事务边界、并发与幂等不变量见
+[fund-freeze.md](docs/fund-freeze.md)。
+
 流水查询支持 `accountId`、`businessType`、`direction`、`from`、`to`、`page` 和 `size`
 参数，分页从 1 开始，单页最多 100 条。
 
@@ -219,7 +226,7 @@ docker compose up -d mysql redis
 docker compose ps
 ```
 
-DDL 会在全新 MySQL 数据卷首次初始化时按 V1、V2、V3 顺序自动执行。Docker 的初始化目录
+DDL 会在全新 MySQL 数据卷首次初始化时按 V1、V2、V3、V4 顺序自动执行。Docker 的初始化目录
 不会对已有数据卷重复执行脚本；已有数据库需按
 [database-design.md](docs/database-design.md) 先备份、检查，再按当前版本依次应用缺失迁移。
 
@@ -279,7 +286,7 @@ curl http://localhost:8080/api/accounts \
 ./mvnw test
 ```
 
-当前套件共 66 个测试，覆盖：
+当前套件共 82 个测试，覆盖：
 
 - 正常转账和双边流水；
 - V1 旧账户余额无损迁移为 available/frozen，且最终移除冗余 `balance` 列；
@@ -288,6 +295,9 @@ curl http://localhost:8080/api/accounts \
 - 第二条流水插入失败时余额、订单、流水和幂等占位全部回滚；
 - 两线程同时从 100 元账户各转 80 元时最多一笔成功；
 - 两线程重复同一个 `Idempotency-Key` 时只执行一次；
+- 独立资金冻结保持总额不变，余额不足、非法金额和越权请求均不修改账户；
+- 两线程并发冻结不会超冻，Freeze 重试/并发幂等只产生一条业务记录；
+- 冻结记录写入失败时双余额、movement 和幂等占位整体回滚；
 - 升级前已保存的 `fromBalance/toBalance` 幂等响应仍可回放；
 - JWT 缺失、无效 token 和已验证用户身份传递；
 - Redis Lua 限流和 Redis 故障时的 fail-open 行为；

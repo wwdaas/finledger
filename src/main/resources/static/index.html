@@ -384,6 +384,27 @@
     </div>
 </div>
 
+<div id="freeze-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="freeze-title">
+    <div class="modal-backdrop" data-close-freeze></div>
+    <div class="modal-card">
+        <button class="modal-close" type="button" data-close-freeze aria-label="关闭">×</button>
+        <p class="eyebrow">FUND FREEZE</p>
+        <h2 id="freeze-title">冻结可用资金</h2>
+        <p>资金只会从可用余额转入冻结余额，账户总额保持不变。</p>
+        <form id="freeze-form">
+            <label><span>冻结账户</span><select id="freeze-account" required></select></label>
+            <label><span>冻结金额（CNY）</span><div class="money-input"><span>¥</span><input id="freeze-amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></div></label>
+            <label><span>业务类型</span><input id="freeze-business-type" maxlength="30" pattern="[A-Z][A-Z0-9_]*" required value="TRADE"></label>
+            <label><span>备注（可选）</span><input id="freeze-remark" maxlength="255" placeholder="例如：Pending transaction"></label>
+            <div class="idempotency-box">
+                <span>Idempotency-Key</span>
+                <code id="freeze-idempotency-key"></code>
+            </div>
+            <button class="button button-dark button-block" type="submit">确认冻结资金</button>
+        </form>
+    </div>
+</div>
+
 <script src="/app.js" defer></script>
 </body>
 </html>

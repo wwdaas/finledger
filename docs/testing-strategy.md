@@ -6,7 +6,7 @@
 - Spring MVC 测试：验证状态码、JWT 入口和统一错误结构；
 - Testcontainers + MySQL 8.4：验证真实 InnoDB 事务、行锁、唯一约束和触发器故障回滚。
 
-`FinancialFlowIntegrationTest` 使用一次性 MySQL 容器依次执行正式 V1、V2、V3 脚本，覆盖正常转账、
+`FinancialFlowIntegrationTest` 使用一次性 MySQL 容器依次执行正式 V1、V2、V3、V4 脚本，覆盖正常转账、
 余额不足、非法金额、账户不存在、流水写入故障回滚、并发超扣、并发重复幂等 key、
 认证和账户权限。并发用两个真实线程同时释放起跑闩锁，不用串行调用模拟竞争。
 
@@ -21,7 +21,13 @@
 再依次执行 V2、V3，验证最终 `available_balance = 1000.00`、`frozen_balance = 0.00` 且旧列已
 移除。双余额集成场景还验证充值不改变冻结额、普通转账只检查可用额，以及 MySQL 拒绝任何
 负 available/frozen 更新。兼容性测试还证明升级前保存的 `fromBalance/toBalance` 幂等快照仍可
-反序列化，并在 Java 中明确映射为来源/目标总资金。当前完整测试套件共 66 项。
+反序列化，并在 Java 中明确映射为来源/目标总资金。
+
+独立 Freeze 测试覆盖正常冻结、总额不变、非法金额、余额不足、不存在账户、水平越权、业务
+记录和资金变化记录。Testcontainers 另外验证两个不同 key 并发冻结 80 最多一个成功、同 key
+并发只执行一次、顺序重试响应回放、同 key 参数冲突、触发器故障整体回滚，以及 freeze_no、
+amount、status、business_type 的数据库约束。Mockito 验证锁后校验、条件更新和写记录的调用
+关系，Spring MVC 测试验证 JWT 身份和 201 响应。当前完整测试套件共 82 项。
 
 AI 集成测试先完成真实充值和转账，再分别以付款人与收款人的用户 ID 查询统计，证明
 分析服务只返回当前 JWT 用户可见的数据。模型结构化输出转换和只读指令识别由独立单元

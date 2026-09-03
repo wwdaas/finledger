@@ -2,6 +2,7 @@ package com.finledger.settlement.service;
 
 import com.finledger.account.entity.AccountEntity;
 import com.finledger.account.exception.AccountNotActiveException;
+import com.finledger.account.exception.InsufficientAvailableBalanceException;
 import com.finledger.account.mapper.AccountMapper;
 import com.finledger.account.service.AccountService;
 import com.finledger.account.service.LockedTransferAccounts;
@@ -13,7 +14,6 @@ import com.finledger.risk.model.RiskPhase;
 import com.finledger.risk.service.RiskEngine;
 import com.finledger.risk.service.RiskEventRecorder;
 import com.finledger.settlement.dto.DeferredTransferResponse;
-import com.finledger.settlement.exception.InsufficientAvailableBalanceException;
 import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.entity.TransferOrderEntity;
 import com.finledger.transfer.exception.CurrencyMismatchException;
