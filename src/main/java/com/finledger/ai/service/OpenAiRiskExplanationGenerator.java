@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finledger.ai.client.OpenAiResponsesClient;
 import com.finledger.ai.exception.AiProviderUnavailableException;
+import com.finledger.ai.model.TransactionExplanationType;
 import com.finledger.risk.dto.RiskEventResponse;
 import com.finledger.settlement.dto.DeferredTransferResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -35,12 +36,14 @@ public class OpenAiRiskExplanationGenerator implements TransactionRiskExplanatio
 
     @Override
     public String explain(
+            TransactionExplanationType intent,
             String question,
             DeferredTransferResponse transaction,
             List<RiskEventResponse> riskEvents
     ) {
         try {
             String input = objectMapper.writeValueAsString(Map.of(
+                    "intent", intent,
                     "question", question,
                     "authorizedTransaction", transaction,
                     "authorizedRiskEvents", riskEvents

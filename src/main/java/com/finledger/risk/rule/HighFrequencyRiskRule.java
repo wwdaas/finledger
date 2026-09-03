@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 @Component
 public class HighFrequencyRiskRule implements RiskRule {
@@ -45,6 +46,11 @@ public class HighFrequencyRiskRule implements RiskRule {
     }
 
     @Override
+    public String name() {
+        return "High frequency transaction";
+    }
+
+    @Override
     public RiskPhase phase() {
         return RiskPhase.PRE_TRANSACTION;
     }
@@ -57,21 +63,35 @@ public class HighFrequencyRiskRule implements RiskRule {
             Long count = redisTemplate.execute(
                     FIXED_WINDOW_SCRIPT, List.of(key), Long.toString(window.toMillis())
             );
-            if (count != null && count > properties.getFrequencyMaxRequests()) {
+            Map<String, Object> metadata = Map.of(
+                    "count", count == null ? 0L : count,
+                    "reviewThreshold", properties.getFrequencyReviewThreshold(),
+                    "rejectThreshold", properties.getFrequencyRejectThreshold(),
+                    "windowSeconds", properties.getFrequencyWindowSeconds()
+            );
+            if (count != null && count > properties.getFrequencyRejectThreshold()) {
                 return new RiskEvaluation(
-                        CODE,
-                        RiskLevel.HIGH,
-                        RiskDecision.REVIEW,
-                        "Transaction frequency " + count + " exceeds configured window limit "
-                                + properties.getFrequencyMaxRequests()
+                        CODE, name(), RiskLevel.HIGH, RiskDecision.REJECT,
+                        "Transaction frequency " + count + " exceeded reject threshold "
+                                + properties.getFrequencyRejectThreshold(), metadata
                 );
             }
+            if (count != null && count > properties.getFrequencyReviewThreshold()) {
+                return new RiskEvaluation(
+                        CODE, name(), RiskLevel.MEDIUM, RiskDecision.REVIEW,
+                        "Transaction frequency " + count + " exceeded review threshold "
+                                + properties.getFrequencyReviewThreshold(), metadata
+                );
+            }
+            return RiskEvaluation.pass(CODE, name(), metadata);
         } catch (DataAccessException exception) {
             LOGGER.warn(
                     "Redis frequency risk check unavailable; continuing userId={}",
                     context.userId()
             );
         }
-        return RiskEvaluation.pass(CODE);
+        return RiskEvaluation.pass(
+                CODE, name(), Map.of("degraded", true, "failurePolicy", "FAIL_OPEN")
+        );
     }
 }

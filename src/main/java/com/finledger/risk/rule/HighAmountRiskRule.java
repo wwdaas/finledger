@@ -8,6 +8,9 @@ import com.finledger.risk.model.RiskLevel;
 import com.finledger.risk.model.RiskPhase;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.util.Map;
+
 @Component
 public class HighAmountRiskRule implements RiskRule {
 
@@ -25,22 +28,41 @@ public class HighAmountRiskRule implements RiskRule {
     }
 
     @Override
+    public String name() {
+        return "High amount transaction";
+    }
+
+    @Override
     public RiskPhase phase() {
         return RiskPhase.IN_TRANSACTION;
     }
 
     @Override
     public RiskEvaluation evaluate(RiskContext context) {
-        if (context.amount().compareTo(properties.getHighAmountThreshold()) <= 0) {
-            return RiskEvaluation.pass(CODE);
+        BigDecimal reviewThreshold = properties.getHighAmountReviewThreshold();
+        BigDecimal rejectThreshold = properties.getHighAmountRejectThreshold();
+        Map<String, Object> metadata = Map.of(
+                "amount", context.amount(),
+                "reviewThreshold", reviewThreshold,
+                "rejectThreshold", rejectThreshold,
+                "currency", "CNY"
+        );
+        if (context.amount().compareTo(reviewThreshold) < 0) {
+            return RiskEvaluation.pass(CODE, name(), metadata);
+        }
+        if (context.amount().compareTo(rejectThreshold) < 0) {
+            return new RiskEvaluation(
+                    CODE, name(), RiskLevel.MEDIUM, RiskDecision.REVIEW,
+                    "Transaction amount " + context.amount().toPlainString()
+                            + " reached review threshold " + reviewThreshold.toPlainString(),
+                    metadata
+            );
         }
         return new RiskEvaluation(
-                CODE,
-                RiskLevel.MEDIUM,
-                RiskDecision.REVIEW,
+                CODE, name(), RiskLevel.HIGH, RiskDecision.REJECT,
                 "Transaction amount " + context.amount().toPlainString()
-                        + " exceeds configured threshold "
-                        + properties.getHighAmountThreshold().toPlainString()
+                        + " reached reject threshold " + rejectThreshold.toPlainString(),
+                metadata
         );
     }
 }

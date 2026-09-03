@@ -2,6 +2,7 @@ package com.finledger.risk.controller;
 
 import com.finledger.common.api.PageResponse;
 import com.finledger.risk.dto.RiskEventResponse;
+import com.finledger.risk.model.RiskDecision;
 import com.finledger.risk.service.RiskEventQueryService;
 import com.finledger.security.CurrentUser;
 import jakarta.validation.constraints.Max;
@@ -29,10 +30,15 @@ public class RiskEventController {
     @GetMapping
     public PageResponse<RiskEventResponse> query(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long transactionId,
             @Size(max = 40) @RequestParam(required = false) String businessNo,
+            @RequestParam(required = false) RiskDecision decision,
+            @Size(max = 40) @RequestParam(required = false) String ruleCode,
             @Min(1) @RequestParam(defaultValue = "1") long page,
             @Min(1) @Max(100) @RequestParam(defaultValue = "20") long size
     ) {
-        return queryService.query(CurrentUser.id(jwt), businessNo, page, size);
+        return queryService.query(
+                CurrentUser.id(jwt), transactionId, businessNo, decision, ruleCode, page, size
+        );
     }
 }

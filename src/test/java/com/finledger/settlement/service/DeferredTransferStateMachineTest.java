@@ -22,5 +22,9 @@ class DeferredTransferStateMachineTest {
                 .isInstanceOf(InvalidTransactionStateException.class);
         assertThatThrownBy(() -> stateMachine.requireTransition("CANCELLED", DeferredTransferStatus.SETTLED))
                 .isInstanceOf(InvalidTransactionStateException.class);
+        assertThatThrownBy(() -> stateMachine.requireTransition("SETTLED", DeferredTransferStatus.SETTLED))
+                .isInstanceOf(InvalidTransactionStateException.class);
+        assertThatThrownBy(() -> stateMachine.requireTransition("CANCELLED", DeferredTransferStatus.CANCELLED))
+                .isInstanceOf(InvalidTransactionStateException.class);
     }
 }

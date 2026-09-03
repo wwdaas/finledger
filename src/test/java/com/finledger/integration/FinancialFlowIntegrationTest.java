@@ -6,6 +6,7 @@ import com.finledger.account.exception.AccountNotFoundException;
 import com.finledger.account.mapper.AccountMapper;
 import com.finledger.account.service.AccountService;
 import com.finledger.ai.dto.AiAnalysisResponse;
+import com.finledger.ai.model.TransactionExplanationType;
 import com.finledger.ai.service.AiRiskExplanationService;
 import com.finledger.ai.service.AiTransactionAssistantService;
 import com.finledger.common.money.InvalidAmountException;
@@ -21,13 +22,20 @@ import com.finledger.ledger.mapper.TransactionRecordMapper;
 import com.finledger.recharge.service.RechargeService;
 import com.finledger.risk.exception.RiskRejectedException;
 import com.finledger.risk.mapper.RiskEventMapper;
+import com.finledger.risk.model.RiskAssessment;
+import com.finledger.risk.model.RiskDecision;
+import com.finledger.risk.model.RiskEvaluation;
+import com.finledger.risk.model.RiskLevel;
 import com.finledger.risk.service.RiskEventQueryService;
+import com.finledger.risk.service.RiskEventRecorder;
 import com.finledger.account.exception.InsufficientAvailableBalanceException;
 import com.finledger.settlement.mapper.FundMovementRecordMapper;
 import com.finledger.settlement.service.PendingTransferService;
 import com.finledger.settlement.service.SettlementService;
 import com.finledger.settlement.service.CancellationService;
+import com.finledger.settlement.service.DeferredTransferQueryService;
 import com.finledger.settlement.exception.InvalidTransactionStateException;
+import com.finledger.settlement.exception.TransactionNotFoundException;
 import com.finledger.transfer.dto.TransferRequest;
 import com.finledger.transfer.dto.TransferResponse;
 import com.finledger.transfer.exception.InsufficientBalanceException;
@@ -43,6 +51,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -54,6 +63,7 @@ import org.testcontainers.mysql.MySQLContainer;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -65,6 +75,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -76,6 +87,7 @@ class FinancialFlowIntegrationTest {
 
     private static final String FAILURE_TRIGGER = "fail_transfer_record_insert";
     private static final String FREEZE_FAILURE_TRIGGER = "fail_fund_freeze_insert";
+    private static final String UNFREEZE_FAILURE_TRIGGER = "fail_unfreeze_movement_insert";
 
     @Container
     static final MySQLContainer MYSQL = mysqlContainer();
@@ -102,7 +114,9 @@ class FinancialFlowIntegrationTest {
     @Autowired private PendingTransferService pendingTransferService;
     @Autowired private SettlementService settlementService;
     @Autowired private CancellationService cancellationService;
+    @Autowired private DeferredTransferQueryService deferredTransferQueryService;
     @Autowired private RiskEventQueryService riskEventQueryService;
+    @Autowired private RiskEventRecorder riskEventRecorder;
     @Autowired private AiTransactionAssistantService aiAssistantService;
     @Autowired private AiRiskExplanationService aiRiskExplanationService;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -415,6 +429,78 @@ class FinancialFlowIntegrationTest {
     }
 
     @Test
+    void shouldRollBackSettlementWhenLedgerWriteFails() {
+        Long owner = createUser("settle_rollback_owner");
+        Long receiver = createUser("settle_rollback_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+        createFailureTrigger();
+
+        assertThatThrownBy(() -> settlementService.settle(owner, pending.transferId()))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(transferOrderMapper.selectById(pending.transferId()).getStatus()).isEqualTo("PENDING");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("300.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
+        assertThat(transactionRecordMapper.selectList(null).stream()
+                .filter(record -> "TRANSFER".equals(record.getBusinessType())))
+                .isEmpty();
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(1);
+    }
+
+    @Test
+    void shouldRollBackCancellationWhenUnfreezeMovementWriteFails() {
+        Long owner = createUser("cancel_rollback_owner");
+        Long receiver = createUser("cancel_rollback_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+        createUnfreezeFailureTrigger();
+
+        assertThatThrownBy(() -> cancellationService.cancel(owner, pending.transferId()))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(transferOrderMapper.selectById(pending.transferId()).getStatus()).isEqualTo("PENDING");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("300.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
+        assertThat(fundMovementRecordMapper.selectCount(null)).isEqualTo(1);
+    }
+
+    @Test
+    void shouldHideDeferredTransferAndLifecycleActionsFromOtherUsers() {
+        Long owner = createUser("lifecycle_permission_owner");
+        Long stranger = createUser("lifecycle_permission_stranger");
+        Long receiver = createUser("lifecycle_permission_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("1000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("300.00"))
+        );
+
+        assertThatThrownBy(() -> deferredTransferQueryService.getOwnedById(stranger, pending.transferId()))
+                .isInstanceOf(TransactionNotFoundException.class);
+        assertThatThrownBy(() -> settlementService.settle(stranger, pending.transferId()))
+                .isInstanceOf(TransactionNotFoundException.class);
+        assertThatThrownBy(() -> cancellationService.cancel(stranger, pending.transferId()))
+                .isInstanceOf(TransactionNotFoundException.class);
+
+        assertThat(transferOrderMapper.selectById(pending.transferId()).getStatus()).isEqualTo("PENDING");
+        assertThat(availableBalance(from)).isEqualByComparingTo("700.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("300.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
+    }
+
+    @Test
     void shouldAllowOnlyOneOfConcurrentSettlementAndCancellation() throws Exception {
         Long owner = createUser("state_race_owner");
         Long receiver = createUser("state_race_receiver");
@@ -457,7 +543,7 @@ class FinancialFlowIntegrationTest {
         rechargeService.recharge(owner, from, money("60000.00"));
 
         var pending = pendingTransferService.createPending(
-                owner, new TransferRequest(from, to, money("50000.01"))
+                owner, new TransferRequest(from, to, money("10000.00"))
         );
 
         assertThat(pending.status()).isEqualTo("PENDING");
@@ -470,27 +556,84 @@ class FinancialFlowIntegrationTest {
     }
 
     @Test
+    void shouldPersistRiskMetadataIdempotentlyAndFilterOnlyOwnedEvents() throws Exception {
+        Long owner = createUser("risk_query_owner");
+        Long stranger = createUser("risk_query_stranger");
+        Long receiver = createUser("risk_query_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("20000.00"));
+        var pending = pendingTransferService.createPending(
+                owner, new TransferRequest(from, to, money("10000.00"))
+        );
+
+        var stored = riskEventQueryService.findByBusinessNo(owner, pending.transferNo());
+        assertThat(stored).singleElement().satisfies(event -> {
+            assertThat(event.transactionId()).isEqualTo(pending.transferId());
+            assertThat(event.amount()).isEqualByComparingTo("10000.00");
+            assertThat(event.metadata()).containsEntry("ruleName", "High amount transaction")
+                    .containsKeys("reviewThreshold", "rejectThreshold");
+        });
+
+        RiskEvaluation duplicateEvaluation = new RiskEvaluation(
+                "HIGH_AMOUNT", "High amount transaction", RiskLevel.MEDIUM,
+                RiskDecision.REVIEW, "duplicate replay", Map.of("replayed", true)
+        );
+        riskEventRecorder.record(
+                owner, pending.transferId(), pending.transferNo(), money("10000.00"),
+                new RiskAssessment(RiskDecision.REVIEW, List.of(duplicateEvaluation))
+        );
+        assertThat(riskEventMapper.selectCount(null)).isEqualTo(1);
+
+        var ownerPage = riskEventQueryService.query(
+                owner, pending.transferId(), null, RiskDecision.REVIEW,
+                "HIGH_AMOUNT", 1, 1
+        );
+        assertThat(ownerPage.total()).isEqualTo(1);
+        assertThat(ownerPage.items()).hasSize(1);
+        assertThat(riskEventQueryService.query(
+                stranger, pending.transferId(), null, RiskDecision.REVIEW,
+                "HIGH_AMOUNT", 1, 20
+        ).items()).isEmpty();
+
+        mockMvc.perform(get("/api/risk-events")
+                        .param("transactionId", pending.transferId().toString())
+                        .param("decision", "REVIEW")
+                        .param("ruleCode", "HIGH_AMOUNT")
+                        .param("page", "1")
+                        .param("size", "1")
+                        .with(jwt().jwt(token -> token.subject(owner.toString()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].transactionId").value(pending.transferId()))
+                .andExpect(jsonPath("$.items[0].metadata.ruleName")
+                        .value("High amount transaction"));
+    }
+
+    @Test
     void shouldPersistDailyLimitRejectionWithoutFreezingMoreFunds() {
         Long owner = createUser("risk_daily_owner");
         Long receiver = createUser("risk_daily_receiver");
         Long from = createAccount(owner);
         Long to = createAccount(receiver);
-        rechargeService.recharge(owner, from, money("250000.00"));
-        pendingTransferService.createPending(
-                owner, new TransferRequest(from, to, money("190000.00"))
-        );
+        rechargeService.recharge(owner, from, money("60000.00"));
+        for (int index = 0; index < 5; index++) {
+            pendingTransferService.createPending(
+                    owner, new TransferRequest(from, to, money("9000.00"))
+            );
+        }
 
         RiskRejectedException rejected = org.assertj.core.api.Assertions.catchThrowableOfType(
                 () -> pendingTransferService.createPending(
-                        owner, new TransferRequest(from, to, money("20000.01"))
+                        owner, new TransferRequest(from, to, money("5000.01"))
                 ),
                 RiskRejectedException.class
         );
 
         assertThat(rejected).isNotNull();
-        assertThat(balance(from)).isEqualByComparingTo("250000.00");
-        assertThat(availableBalance(from)).isEqualByComparingTo("60000.00");
-        assertThat(frozenBalance(from)).isEqualByComparingTo("190000.00");
+        assertThat(balance(from)).isEqualByComparingTo("60000.00");
+        assertThat(availableBalance(from)).isEqualByComparingTo("15000.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("45000.00");
         var rejectedOrder = transferOrderMapper.selectList(null).stream()
                 .filter(order -> rejected.getTransactionNo().equals(order.getTransferNo()))
                 .findFirst().orElseThrow();
@@ -499,30 +642,79 @@ class FinancialFlowIntegrationTest {
         assertThat(riskEventQueryService.findByBusinessNo(owner, rejected.getTransactionNo()))
                 .extracting(event -> event.ruleCode())
                 .containsExactly("DAILY_LIMIT");
-        assertThat(riskEventMapper.selectCount(null)).isEqualTo(2);
+        assertThat(riskEventMapper.selectCount(null)).isEqualTo(3);
     }
 
     @Test
-    void shouldExplainOnlyTheAuthenticatedUsersDeferredTransaction() {
+    void shouldExplainOnlyTheAuthenticatedUsersDeferredTransaction() throws Exception {
         Long owner = createUser("ai_risk_owner");
         Long receiver = createUser("ai_risk_receiver");
         Long from = createAccount(owner);
         Long to = createAccount(receiver);
         rechargeService.recharge(owner, from, money("60000.00"));
         var pending = pendingTransferService.createPending(
-                owner, new TransferRequest(from, to, money("50000.01"))
+                owner, new TransferRequest(from, to, money("10000.00"))
         );
         String question = "交易 " + pending.transferNo() + " 为什么触发风控？";
 
         var explanation = aiRiskExplanationService.explain(owner, question);
 
+        assertThat(explanation.intent()).isEqualTo(TransactionExplanationType.EXPLAIN_RISK);
         assertThat(explanation.transactionNo()).isEqualTo(pending.transferNo());
         assertThat(explanation.status()).isEqualTo("PENDING");
         assertThat(explanation.riskDecision()).isEqualTo("REVIEW");
         assertThat(explanation.riskEvents()).extracting(event -> event.ruleCode())
                 .containsExactly("HIGH_AMOUNT");
+        assertThat(aiRiskExplanationService.explain(
+                owner, "交易 " + pending.transferNo() + " 当前状态是什么？"
+        ).intent()).isEqualTo(TransactionExplanationType.QUERY_TRANSACTION_STATUS);
+        assertThat(aiRiskExplanationService.explain(
+                owner, "请解释交易 " + pending.transferNo()
+        ).intent()).isEqualTo(TransactionExplanationType.EXPLAIN_TRANSACTION);
         assertThatThrownBy(() -> aiRiskExplanationService.explain(receiver, question))
                 .isInstanceOf(com.finledger.settlement.exception.TransactionNotFoundException.class);
+        assertThat(availableBalance(from)).isEqualByComparingTo("50000.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("10000.00");
+        assertThat(transferOrderMapper.selectCount(null)).isEqualTo(1);
+        assertThat(riskEventMapper.selectCount(null)).isEqualTo(1);
+
+        mockMvc.perform(post("/api/ai/transactions/explain")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"question\":\"" + question + "\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void shouldExplainRejectedTransactionWithoutChangingFunds() {
+        Long owner = createUser("ai_rejected_owner");
+        Long receiver = createUser("ai_rejected_receiver");
+        Long from = createAccount(owner);
+        Long to = createAccount(receiver);
+        rechargeService.recharge(owner, from, money("60000.00"));
+
+        RiskRejectedException rejected = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> pendingTransferService.createPending(
+                        owner, new TransferRequest(from, to, money("50000.00"))
+                ),
+                RiskRejectedException.class
+        );
+        assertThat(rejected).isNotNull();
+
+        var explanation = aiRiskExplanationService.explain(
+                owner, "交易 " + rejected.getTransactionNo() + " 为什么被拒绝？"
+        );
+
+        assertThat(explanation.intent()).isEqualTo(TransactionExplanationType.EXPLAIN_RISK);
+        assertThat(explanation.status()).isEqualTo("FAILED");
+        assertThat(explanation.riskDecision()).isEqualTo("REJECT");
+        assertThat(explanation.riskEvents()).anySatisfy(event -> {
+            assertThat(event.ruleCode()).isEqualTo("HIGH_AMOUNT");
+            assertThat(event.decision()).isEqualTo("REJECT");
+            assertThat(event.reason()).contains("reject threshold");
+        });
+        assertThat(availableBalance(from)).isEqualByComparingTo("60000.00");
+        assertThat(frozenBalance(from)).isEqualByComparingTo("0.00");
+        assertThat(balance(to)).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -815,7 +1007,8 @@ class FinancialFlowIntegrationTest {
                 "database/schema/V1__create_core_tables.sql",
                 "database/schema/V2__add_settlement_and_risk.sql",
                 "database/schema/V3__remove_redundant_account_balance.sql",
-                "database/schema/V4__add_fund_freeze.sql"
+                "database/schema/V4__add_fund_freeze.sql",
+                "database/schema/V5__enhance_risk_events.sql"
         );
         container.withCommand("--log-bin-trust-function-creators=1");
         container.withStartupTimeout(Duration.ofMinutes(2));
@@ -957,9 +1150,23 @@ class FinancialFlowIntegrationTest {
                 """);
     }
 
+    private void createUnfreezeFailureTrigger() {
+        jdbcTemplate.execute("""
+                CREATE TRIGGER fail_unfreeze_movement_insert
+                BEFORE INSERT ON fund_movement_record
+                FOR EACH ROW
+                BEGIN
+                    IF NEW.action = 'UNFREEZE' THEN
+                        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced unfreeze movement failure';
+                    END IF;
+                END
+                """);
+    }
+
     private void dropFailureTriggers() {
         jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + FAILURE_TRIGGER);
         jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + FREEZE_FAILURE_TRIGGER);
+        jdbcTemplate.execute("DROP TRIGGER IF EXISTS " + UNFREEZE_FAILURE_TRIGGER);
     }
 
     private record Attempt(TransferResponse response, RuntimeException failure) {

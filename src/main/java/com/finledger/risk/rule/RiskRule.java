@@ -8,6 +8,10 @@ public interface RiskRule {
 
     String code();
 
+    default String name() {
+        return code();
+    }
+
     RiskPhase phase();
 
     RiskEvaluation evaluate(RiskContext context);

@@ -4,8 +4,8 @@
 
 MySQL 是账户余额、订单、流水、幂等结果和风险事件的 Source of Truth。V1 从五张核心表
 起步；V2 用增量 DDL 加入双余额模型、资金变动记录和风险事件；V3 在确认数据完成回填后
-移除过渡期的冗余 `balance` 列；V4 增加独立资金冻结业务记录并扩展既有幂等/资金变化类型。
-已经执行过的迁移从不回写。
+移除过渡期的冗余 `balance` 列；V4 增加独立资金冻结业务记录并扩展既有幂等/资金变化类型；
+V5 为风险事件增加金额、JSON 元数据和查询索引。已经执行过的迁移从不回写。
 
 ```mermaid
 erDiagram
@@ -35,11 +35,12 @@ erDiagram
 | `idempotency_record` | 幂等请求的唯一执行权、摘要和成功快照 |
 | `fund_freeze` | 独立资金冻结业务事实、外部冻结号和当前 FROZEN 状态 |
 | `fund_movement_record` | FREEZE / SETTLEMENT / UNFREEZE 的三类余额快照 |
-| `risk_event` | 每条命中风控规则的等级、结论和原因 |
+| `risk_event` | 每条命中风控规则的金额、等级、结论、原因和 JSON 元数据 |
 
 ## Account Balance Model
 
-当前数据库只保存两个权威金额字段：
+业务上会同时讨论 `balance/totalBalance`、`availableBalance` 和 `frozenBalance`。当前数据库只保存
+后两个权威金额字段：
 
 - `available_balance`：当前可以直接参加普通转账等资金操作的金额；
 - `frozen_balance`：已被待处理交易预留、不能再次消费的金额。
@@ -47,14 +48,19 @@ erDiagram
 总资金是派生概念，不建立第三个冗余列：
 
 ```text
-totalBalance = available_balance + frozen_balance
+balance（逻辑总额）= totalBalance = available_balance + frozen_balance
 available_balance >= 0
 frozen_balance >= 0
 ```
 
-`available_balance` 和 `frozen_balance` 的非负约束、两者之和不超过 `DECIMAL(19,2)` 范围的
-约束同时由 Java 业务校验和 MySQL `CHECK` 保护。API 的 `totalBalance` 由 Response DTO 计算，
+`available_balance` 和 `frozen_balance` 的非负约束由 Java 业务校验和 MySQL `CHECK` 共同保护，
+金额上限由 `DECIMAL(19,2)` 与 Java 校验限制。API 的 `totalBalance` 由实体/Response DTO 计算，
 因此不会出现三个金额列需要同步更新的问题。
+
+V2 迁移期间曾临时保留物理 `balance` 列，并用 CHECK 强制
+`balance = available_balance + frozen_balance`，完成旧数据回填后由 V3 删除。也就是说，项目
+实现了该恒等式，但最终选择“两个存储列 + 一个派生总额”，避免第三列冗余。这一点必须在面试
+中如实说明，不能把逻辑总额误述成当前仍存在的数据库列。
 
 只有一个余额无法区分“用户拥有”与“当前可花”：已经为待处理交易预留的资金仍属于用户，
 但不能被另一笔交易重复消费。冻结和解冻只在 available/frozen 之间移动金额，不改变总资金；
@@ -83,6 +89,7 @@ frozen_balance >= 0
 - 转账金额为正、来源目标不能相同；
 - 借贷流水的 before/after 必须与 direction 和 amount 对账；
 - 风险事件按 `(business_no, rule_code)` 去重；
+- 风险事件金额为正，`metadata_json` 使用 MySQL JSON 类型，用户/决策/规则查询均有组合索引；
 - 幂等键按 `(user_id, business_type, idempotency_key)` 唯一，请求摘要阻止 key 参数复用；
 - 金融记录无级联删除，避免删除身份或账户时连带抹去审计事实。
 
@@ -91,7 +98,7 @@ frozen_balance >= 0
 
 ## 迁移应用
 
-新数据库由 Compose 初始化目录按文件名顺序执行 V1、V2、V3、V4。
+新数据库由 Compose 初始化目录按文件名顺序执行 V1、V2、V3、V4、V5。
 
 迁移采用“新增、回填、收敛”而不是直接改写 V1：
 
@@ -100,11 +107,13 @@ frozen_balance >= 0
 3. V2 用约束验证过渡期 `balance = available_balance + frozen_balance`；
 4. V3 移除依赖旧列的约束和 `balance` 列，最终只保留双余额。
 5. V4 创建 `fund_freeze`，并允许幂等和资金变化记录使用 `FUND_FREEZE` 业务类型。
+6. V5 从关联订单回填历史风险事件金额，再将 `amount` 收敛为非空，并增加
+   `metadata_json` 与组合查询索引。
 
 因此迁移前后的资金恒等式为
 `old balance = new available_balance + new frozen_balance`，旧资金不会丢失。
 
-已有 V1 数据库依次执行 V2、V3、V4：
+已有 V1 数据库依次执行 V2、V3、V4、V5：
 
 ```bash
 docker compose exec -T mysql sh -c \
@@ -118,10 +127,14 @@ docker compose exec -T mysql sh -c \
 docker compose exec -T mysql sh -c \
   'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE"' \
   < database/schema/V4__add_fund_freeze.sql
+
+docker compose exec -T mysql sh -c \
+  'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE"' \
+  < database/schema/V5__enhance_risk_events.sql
 ```
 
-已经执行 V3 的数据库只执行 V4。迁移文件刻意不使用 `IF NOT EXISTS`，重复执行会显式失败，
+已经执行 V4 的数据库只执行 V5。迁移文件刻意不使用 `IF NOT EXISTS`，重复执行会显式失败，
 从而暴露环境漂移。执行前应备份，并通过 `information_schema.columns` 确认当前版本：V1 只有
 `balance`，V2 三列共存，V3 只有 `available_balance` / `frozen_balance`，V4 还存在
-`fund_freeze` 表。后续可引入 Flyway
+`fund_freeze` 表；V5 还存在 `risk_event.amount` 和 `metadata_json`。后续可引入 Flyway
 自动记录迁移版本，但不能回写 V1 假装结构从未演进。

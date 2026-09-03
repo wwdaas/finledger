@@ -1,5 +1,8 @@
 # AI 交易分析助手
 
+本文件保留为旧链接兼容入口；当前三种解释意图、JWT 边界和 provider fallback 见
+[ai.md](ai.md)。
+
 AI 助手是只读功能，提供交易分析 `/api/ai/transactions/query` 和交易状态/风控解释
 `/api/ai/transactions/explain`。分析流程固定为：
 
@@ -15,7 +18,7 @@ JWT 用户 ID。系统没有向 AI 暴露充值、转账或余额更新工具。
 状态解释流程为：
 
 ```text
-问题 -> 提取 transactionNo -> JWT userId -> Java 查询本人 DEFERRED 订单
+问题 -> 受控解释意图 + transactionNo -> JWT userId -> Java 查询本人 DEFERRED 订单
      -> Java 查询本人 risk_event -> 授权结构化数据 -> 只读解释
 ```
 
@@ -24,9 +27,11 @@ JWT 用户 ID。系统没有向 AI 暴露充值、转账或余额更新工具。
 的交易号仍无法查询其交易、风控记录或资金状态。风险决策已经由 Java 规则产生，AI 不能重新
 判定 PASS/REVIEW/REJECT。
 
-默认 `AI_ENABLED=false`，使用规则解析和确定性解释，方便无 API key 演示。启用后，
+解释支持 `QUERY_TRANSACTION_STATUS`、`EXPLAIN_TRANSACTION`、`EXPLAIN_RISK`。默认
+`AI_ENABLED=false`，使用规则解析和确定性解释，方便无 API key 演示。启用后，
 应用通过 OpenAI Responses API 获取意图和解释。分析意图使用严格 JSON Schema，之后仍由
-Java 二次限制枚举、时间窗口、最多 10 条结果和金额精度。官方 Structured Outputs 文档：
+Java 二次限制枚举、时间窗口、最多 10 条结果和金额精度。外部解释调用失败时自动回退到 Java
+基础说明，核心交易不依赖 AI。官方 Structured Outputs 文档：
 <https://developers.openai.com/api/docs/guides/structured-outputs>。
 
 外部模型配置：

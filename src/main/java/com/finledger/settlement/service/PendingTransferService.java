@@ -41,7 +41,8 @@ public class PendingTransferService {
         String transferNo = transferNumberGenerator.nextTransferNo();
         LocalDateTime occurredAt = LocalDateTime.now(ZoneOffset.UTC);
         RiskContext context = new RiskContext(
-                userId, transferNo, request.fromAccountId(), request.toAccountId(), amount, occurredAt
+                userId, transferNo, "DEFERRED_TRANSFER", request.fromAccountId(),
+                request.toAccountId(), amount, occurredAt
         );
         RiskAssessment preAssessment = riskEngine.evaluate(context, RiskPhase.PRE_TRANSACTION);
         PendingTransferOutcome outcome = executor.execute(

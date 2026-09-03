@@ -31,6 +31,19 @@ class RiskEngineTest {
                 .containsExactly("REVIEW_RULE", "REJECT_RULE");
     }
 
+    @Test
+    void shouldSkipAllRulesWhenRiskControlIsDisabled() {
+        RiskProperties properties = new RiskProperties();
+        properties.setEnabled(false);
+        RiskRule reject = rule("REJECT_RULE", RiskPhase.IN_TRANSACTION, RiskDecision.REJECT);
+
+        var assessment = new RiskEngine(List.of(reject), properties)
+                .evaluate(context(), RiskPhase.IN_TRANSACTION);
+
+        assertThat(assessment.decision()).isEqualTo(RiskDecision.PASS);
+        assertThat(assessment.triggeredRules()).isEmpty();
+    }
+
     private RiskRule rule(String code, RiskPhase phase, RiskDecision decision) {
         return new RiskRule() {
             @Override public String code() { return code; }

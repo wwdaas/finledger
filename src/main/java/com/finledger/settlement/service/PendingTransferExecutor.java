@@ -88,12 +88,13 @@ public class PendingTransferExecutor {
                 userId, request, amount, transferNo, fromAccount.getCurrency(), occurredAt
         );
         RiskContext context = new RiskContext(
-                userId, transferNo, request.fromAccountId(), request.toAccountId(), amount, occurredAt
+                userId, transferNo, "DEFERRED_TRANSFER", request.fromAccountId(),
+                request.toAccountId(), amount, occurredAt
         );
         RiskAssessment assessment = preAssessment.combine(
                 riskEngine.evaluate(context, RiskPhase.IN_TRANSACTION)
         );
-        riskEventRecorder.record(userId, order.getId(), transferNo, assessment);
+        riskEventRecorder.record(userId, order.getId(), transferNo, amount, assessment);
         if (assessment.decision() == RiskDecision.REJECT) {
             finishRiskAssessment(order, "FAILED", assessment.decision().name(), occurredAt);
             LOGGER.warn(
